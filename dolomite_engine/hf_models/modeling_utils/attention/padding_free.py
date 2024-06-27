@@ -5,9 +5,9 @@ from transformers import DynamicCache
 
 from ....utils import is_flash_attention_available
 from ...enums import PositionEmbeddingType
-from ..position_embedding import apply_rotary_pos_emb
+# from ..position_embedding import apply_rotary_pos_emb
 from .base import Attention
-
+from .sb_varlen import sb_flash_attn_varlen
 
 if is_flash_attention_available():
     from flash_attn.flash_attn_interface import flash_attn_varlen_func
@@ -36,10 +36,9 @@ class PaddingFreeAttention(Attention):
         # key -> (total_q, num_key_value_heads, head_dim)
         # value -> (total_q, num_key_value_heads, head_dim)
         # ==========================================================================================
-
-        if self.position_embedding_type == PositionEmbeddingType.rope:
-            query = apply_rotary_pos_emb(query, rope_cos_sin)
-            key = apply_rotary_pos_emb(key, rope_cos_sin)
+        # if self.position_embedding_type == PositionEmbeddingType.rope:
+        #     query = apply_rotary_pos_emb(query, rope_cos_sin)
+        #     key = apply_rotary_pos_emb(key, rope_cos_sin)
 
         # ==========================================================================================
         # query -> (total_q, num_heads, head_dim)
@@ -50,6 +49,17 @@ class PaddingFreeAttention(Attention):
         softmax_scale = self._get_softmax_scale()
         dropout_p = self.attn_pdrop if self.training else 0
 
+        v_ = value.permute(1, 0, 2)
+        attn_output, rem = sb_flash_attn_varlen(
+            q=query.permute(1, 0, 2),
+            k=key.permute(1, 0, 2),
+            v=v_,
+            cu_seqlens=cu_seqlens,
+            inv_temp=softmax_scale,
+        )
+        attn_output = attn_output + rem[..., None] * v_
+        attn_output = attn_output.permute(1, 0, 2)
+        """
         attn_output = flash_attn_varlen_func(
             query,
             key,
@@ -62,6 +72,7 @@ class PaddingFreeAttention(Attention):
             softmax_scale=softmax_scale,
             causal=self.causal,
         )
+        """
 
         # ==========================================================================================
         # attn_output -> (total_q, num_heads, head_dim)
