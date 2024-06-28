@@ -26,10 +26,10 @@ model_args:
     initializer_range: 0.02
     layer_norm_epsilon: 1e-05
     model_type: gpt_dolomite
-    n_embd: 2560
+    n_embd: 1024
     n_head: 40
-    n_inner: 8192
-    n_layer: 32
+    n_inner: 2048
+    n_layer: 24
     n_positions: 4096
     normalization_function: rmsnorm
     position_embedding_type: rope
