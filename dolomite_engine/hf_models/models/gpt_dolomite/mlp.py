@@ -8,7 +8,6 @@ from ...enums import InitMethod
 from ...modeling_utils import ParameterizedLinear, get_activation_function, is_glu
 from .config import GPTDolomiteConfig
 
-
 class MLP(nn.Module):
     def __init__(self, config: GPTDolomiteConfig) -> None:
         super().__init__()
