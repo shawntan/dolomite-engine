@@ -8,6 +8,9 @@ from ...enums import InitMethod
 from ...modeling_utils import ParameterizedLinear, get_activation_function, is_glu
 from .config import GPTDolomiteConfig
 
+import scattermoe
+from scattermoe.parallel_experts import ParallelExperts
+
 class MLP(nn.Module):
     def __init__(self, config: GPTDolomiteConfig) -> None:
         super().__init__()
@@ -48,6 +51,7 @@ class MLP(nn.Module):
         hidden_states = self.c_proj(hidden_states)
         hidden_states = self.dropout(hidden_states)
         return hidden_states
+
 
 
 def interleave_up_gate_tensor_for_mlp(up_weight: torch.Tensor, gate_weight: torch.Tensor) -> torch.Tensor:

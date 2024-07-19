@@ -117,7 +117,7 @@ class ScatterMoE(nn.Module):
         config_copy = deepcopy(config)
         config_copy.add_bias = False
         # TODO make ScatterMoE MLP
-        self.experts = nn.ModuleList([MLP(config_copy) for _ in range(self.num_experts)]) # TODO
+        self.experts = ScatterMoEMLP(config)
         del config_copy
         assert not config.add_bias, "ScatterMoE does not support add_bias"
         self._use_padding_free_transformer = use_padding_free_transformer
@@ -144,39 +144,9 @@ class ScatterMoE(nn.Module):
 
         # we cast back to the input dtype
         routing_weights = routing_weights.to(hidden_states.dtype)
-
-        final_hidden_states = torch.zeros_like(hidden_states)
-
-        # One hot encode the selected experts to create an expert mask
-        # this will be used to easily index which expert is going to be sollicitated
-        expert_mask = torch.nn.functional.one_hot(selected_experts, num_classes=self.num_experts).permute(2, 1, 0)
-        # expert_mask -> (num_experts, top_k, batch_size * sequence_length)
-
-        # Loop over all available experts in the model and perform the computation on each expert
-        for expert_idx in range(self.num_experts):
-            expert_layer = self.experts[expert_idx]
-            idx, top_x = torch.where(expert_mask[expert_idx])
-
-            if top_x.shape[0] == 0:
-                continue
-
-            # in torch it is faster to index using lists than torch tensors
-            top_x_list = top_x.tolist()
-            idx_list = idx.tolist()
-
-            # Index the correct hidden states and compute the expert hidden state for
-            # the current expert. We need to make sure to multiply the output hidden
-            # states by `routing_weights` on the corresponding tokens (top-1 and top-2)
-            current_state = hidden_states[None, top_x_list].reshape(-1, hidden_dim)
-            current_hidden_states = expert_layer(current_state) * routing_weights[top_x_list, idx_list, None]
-
-            # However `index_add_` only support torch tensors for indexing so we'll use
-            # the `top_x` tensor here.
-            final_hidden_states.index_add_(0, top_x, current_hidden_states.to(hidden_states.dtype))
-
+        final_hidden_states = self.experts(hidden_states, routing_weights, selected_experts)
         if not self._use_padding_free_transformer:
             final_hidden_states = final_hidden_states.reshape(batch_size, sequence_length, hidden_dim)
-
         return final_hidden_states, router_logits
 
     def extra_repr(self):
@@ -227,9 +197,25 @@ class ScatterMoEMLP(nn.Module):
         # ParameterizedLinear(intermediate_size, hidden_size, bias=add_bias, std=std)
         self.dropout = nn.Identity() if residual_dropout == 0 else nn.Dropout(residual_dropout)
 
-    def forward(self, hidden_states: torch.Tensor) -> torch.Tensor:
-        hidden_states = self.c_fc(hidden_states)
+    def forward(self, hidden_states: torch.Tensor, routing_weights: torch.Tensor, selected_experts: torch.Tensor) -> torch.Tensor:
+        with torch.no_grad():
+            sorted_expert_idxs, sorted_scattered_idxs = scattermoe.kernels.ops.flatten_and_sort(selected_experts)
+            padded_block_idxs, expert_offsets = \
+                scattermoe.kernels.ops.padded_block_indices(sorted_expert_idxs, self.num_experts)
+
+        hidden_states = self.c_fc(
+            hidden_states, self.top_k,
+            sorted_expert_idxs, sorted_scattered_idxs,
+            padded_block_idxs, expert_offsets,
+            grouped_out=True
+        )
         hidden_states = self.act(hidden_states)
-        hidden_states = self.c_proj(hidden_states)
+        hidden_states = self.c_proj(
+            hidden_states, 1, sorted_expert_idxs, sorted_scattered_idxs,
+            padded_block_idxs, expert_offsets,
+            grouped_in=True,
+            gates=routing_weights,
+        )
+
         hidden_states = self.dropout(hidden_states)
         return hidden_states
