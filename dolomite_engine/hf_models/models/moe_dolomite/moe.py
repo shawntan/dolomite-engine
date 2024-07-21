@@ -1,16 +1,20 @@
 import math
 from copy import deepcopy
 
-import scattermoe
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from scattermoe.parallel_experts import ParallelExperts
 
+from ....utils import is_scattermoe_available
 from ...enums import InitMethod
 from ...modeling_utils import ParameterizedLinear, get_activation_function, is_glu
 from ..gpt_dolomite.mlp import MLP
 from .config import MoEDolomiteConfig
+
+
+if is_scattermoe_available():
+    import scattermoe
+    from scattermoe.parallel_experts import ParallelExperts
 
 
 class SparseMoE(nn.Module):
