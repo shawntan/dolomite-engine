@@ -5,7 +5,7 @@ from transformers import DynamicCache
 from ...enums import AttentionHeadType
 from ...modeling_utils import get_attention_module, get_normalization_function
 from .config import MoEDolomiteConfig
-from .moe import SparseMoE
+from .moe import SparseMoE, ScatterMoE
 
 
 class SparseMoEBlock(nn.Module):
@@ -40,7 +40,10 @@ class SparseMoEBlock(nn.Module):
             eps=config.layer_norm_epsilon,
             normalization_implementation=normalization_implementation,
         )
-        self.mlp = SparseMoE(config, use_padding_free_transformer=use_padding_free_transformer)
+        if config.use_scattermoe:
+            self.mlp = ScatterMoE(config, use_padding_free_transformer=use_padding_free_transformer)
+        else:
+            self.mlp = SparseMoE(config, use_padding_free_transformer=use_padding_free_transformer)
 
     def forward(
         self,
@@ -72,15 +75,12 @@ class SparseMoEBlock(nn.Module):
 
         residual = hidden_states
         hidden_states = self.ln_2(hidden_states)
-
         feed_forward_hidden_states, router_logits = self.mlp(hidden_states)
 
         if self.m_residual is not None:
             feed_forward_hidden_states = feed_forward_hidden_states * self.m_residual
-
         # residual connection
         hidden_states = residual + feed_forward_hidden_states
-
         outputs = (hidden_states,)
 
         if output_router_logits:

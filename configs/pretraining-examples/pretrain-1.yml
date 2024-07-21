@@ -1,4 +1,5 @@
 datasets:
+        # TODO make ScatterMoE MLP
   # class_name, data_name & data_sampling_ratio are not used but need to be passed to avoid errors
   - class_name: MegatronDataset
     data_name: Megatron
@@ -8,18 +9,18 @@ datasets:
       data_cache_path: cache
       # Option 1: data loading using --data-path with single file
       data_path:
-        - data/lang=Matlab
+        - /proj/datasets/slim_pajama_gptneox_megatron/train/chunk1
       split: 98,1,1
       sequence_length: 2048
 
 tokenizer_args:
-  tokenizer_name: bigcode/starcoder
+  tokenizer_name: EleutherAI/gpt-neox-20b
 
 model_args:
   model_class: AutoModelForCausalLM
   pretrained_config:
-    model_type: gpt_dolomite
-    vocab_size: 50257
+    model_type: moe_dolomite
+    vocab_size: 50304
     n_positions: 2048
     n_embd: 768
     n_layer: 12
@@ -40,11 +41,12 @@ model_args:
     eos_token_id: 50256
     pad_token_id: 50256
     attention_softmax_in_fp32: true
-    add_bias: true
+    add_bias: false
     position_embedding_type: learned_absolute
     rope_theta: 10000
-  attention_implementation: flash_attention_2
-  use_padding_free_transformer: true
+    use_scattermoe: true
+  attention_implementation: sdpa # flash_attention_2
+  # use_padding_free_transformer: true
 
 tuning_args:
   tuning_method: pretraining
@@ -75,4 +77,4 @@ mixed_precision_args:
   dtype: bf16
 
 distributed_args:
-  distributed_backend: deepspeed
+  distributed_backend: torch

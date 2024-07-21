@@ -7,6 +7,10 @@ from ...enums import InitMethod
 from ...modeling_utils import ParameterizedLinear, get_activation_function, is_glu
 from .config import GPTDolomiteConfig
 
+import scattermoe
+from scattermoe.parallel_experts import ParallelExperts
+
+from typing import Tuple
 
 class MLP(nn.Module):
     def __init__(self, config: GPTDolomiteConfig) -> None:
@@ -54,5 +58,5 @@ def interleave_up_gate_tensor_for_mlp(up_weight: torch.Tensor, gate_weight: torc
     return torch.cat([up_weight, gate_weight])
 
 
-def split_up_gate_tensor_for_mlp(c_fc_weight: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+def split_up_gate_tensor_for_mlp(c_fc_weight: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
     return c_fc_weight.chunk(2)
