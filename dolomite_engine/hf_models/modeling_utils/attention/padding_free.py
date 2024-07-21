@@ -48,17 +48,28 @@ class PaddingFreeAttention(Attention):
 
         softmax_scale = self._get_softmax_scale()
         dropout_p = self.attn_pdrop if self.training else 0
-
         v_ = value.permute(1, 0, 2)
-        attn_output, rem = sb_flash_attn_varlen(
-            q=query.permute(1, 0, 2),
-            k=key.permute(1, 0, 2),
-            v=v_,
-            cu_seqlens=cu_seqlens,
-            inv_temp=softmax_scale,
-        )
-        attn_output = attn_output + rem[..., None] * v_
-        attn_output = attn_output.permute(1, 0, 2)
+        if cu_seqlens.size(0) == 2:
+            attn_output, rem = sb_flash_attn_varlen(
+                q=query.permute(1, 0, 2).contiguous(),
+                k=key.permute(1, 0, 2).contiguous(),
+                v=v_.contiguous(),
+                cu_seqlens=torch.tensor([query.size(0)], dtype=torch.int32, device=query.device),
+                inv_temp=softmax_scale,
+                zero_start=False
+            )
+            attn_output = attn_output + rem[..., None] * v_
+            attn_output = attn_output.permute(1, 0, 2).contiguous()
+        else:
+            attn_output, rem = sb_flash_attn_varlen(
+                q=query.permute(1, 0, 2),
+                k=key.permute(1, 0, 2),
+                v=v_,
+                cu_seqlens=cu_seqlens,
+                inv_temp=softmax_scale,
+            )
+            attn_output = attn_output + rem[..., None] * v_
+            attn_output = attn_output.permute(1, 0, 2)
         """
         attn_output = flash_attn_varlen_func(
             query,

@@ -112,6 +112,9 @@ class GPTDolomiteForCausalLM(GPTDolomitePreTrainedModel):
     ) -> Union[Tuple, CausalLMOutputWithPast]:
         return_dict = return_dict if return_dict is not None else self.config.use_return_dict
 
+        if not self.training and input_ids.size(0) == 1:
+            input_ids = [list(x for x in input_ids[0])]
+
         input_ids, position_ids, token_type_ids, labels, cu_seqlens, max_seqlen = self.prepare_inputs_for_model(
             input_ids=input_ids,
             inputs_embeds=inputs_embeds,
@@ -151,12 +154,13 @@ class GPTDolomiteForCausalLM(GPTDolomitePreTrainedModel):
             max_seqlen=max_seqlen,
         )
         hidden_states = transformer_outputs[0]
-
         lm_logits = (
-            F.linear(hidden_states, self.transformer.wte.weight)
+            F.linear(hidden_states, self.transformer.wte.weight.to(hidden_states.device))
             if self._tied_word_embeddings
             else self.lm_head(hidden_states)
         )
+        if not self.training and cu_seqlens.size(0) == 2:
+            lm_logits = lm_logits[None, :]
 
         if self.m_width is not None:
             lm_logits = lm_logits / self.m_width

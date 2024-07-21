@@ -160,6 +160,7 @@ class GPTDolomitePreTrainedModel(PreTrainedModel):
                 assert (
                     cu_seqlens is not None
                 ), "cu_seqlens needs to be specified when using tensor inputs with padding_free transformer"
+
                 assert position_ids is not None, "max_seqlen needs to be specified when specifying cu_seqlens"
                 assert max_seqlen is not None, "max_seqlen needs to be specified when specifying cu_seqlens"
                 assert attention_mask is None, "attention_mask should not be passed when specifying cu_seqlens"
@@ -278,10 +279,11 @@ class GPTDolomiteModel(GPTDolomitePreTrainedModel):
 
         past_key_values = DynamicCache() if use_cache and past_key_values is None else past_key_values
         all_hidden_states = () if output_hidden_states else None
+        print(cu_seqlens)
         for block in self.h:
             if output_hidden_states:
                 all_hidden_states += (hidden_states,)
-
+            
             hidden_states = block(
                 hidden_states,
                 past_key_values=past_key_values,
@@ -355,6 +357,7 @@ class GPTDolomiteModel(GPTDolomitePreTrainedModel):
     ) -> torch.Tensor:
         if self.position_embedding_type == PositionEmbeddingType.rope:
             cos, sin = self.rope(key_length, dtype=dtype, device=device)
+            position_ids = position_ids.to(cos.device)
             cos = cos[position_ids].unsqueeze(1)
             sin = sin[position_ids].unsqueeze(1)
             return cos, sin

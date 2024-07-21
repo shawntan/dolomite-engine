@@ -27,8 +27,8 @@ model_args:
     layer_norm_epsilon: 1e-05
     model_type: gpt_dolomite
     n_embd: 1024
-    n_head: 40
-    n_inner: 2048
+    n_head: 16
+    n_inner: 2560
     n_layer: 24
     n_positions: 4096
     normalization_function: rmsnorm
@@ -47,11 +47,13 @@ tuning_args:
   tuning_method: pretraining
 
 save_args:
-  save_path: checkpoints/dense
+  save_path: checkpoints/stickbreaking
   save_interval: 1000
+load_args:
+  load_path: checkpoints/stickbreaking
 
 training_parameters:
-  num_training_steps: 10000
+  num_training_steps: 1000000
   eval_interval: 1000
   micro_batch_size: 1
   gradient_accumulation_steps: 8
