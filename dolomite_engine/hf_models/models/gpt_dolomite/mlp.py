@@ -1,10 +1,8 @@
 import math
 from typing import Tuple
 
-import scattermoe
 import torch
 import torch.nn as nn
-from scattermoe.parallel_experts import ParallelExperts
 
 from ...enums import InitMethod
 from ...modeling_utils import ParameterizedLinear, get_activation_function, is_glu
