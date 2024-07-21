@@ -1,16 +1,16 @@
+import math
 from copy import deepcopy
 
+import scattermoe
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from scattermoe.parallel_experts import ParallelExperts
 
-from ...modeling_utils import ParameterizedLinear
+from ...enums import InitMethod
+from ...modeling_utils import ParameterizedLinear, get_activation_function, is_glu
 from ..gpt_dolomite.mlp import MLP
 from .config import MoEDolomiteConfig
-
-
-import scattermoe
-from scattermoe.parallel_experts import ParallelExperts
 
 
 class SparseMoE(nn.Module):
@@ -18,7 +18,6 @@ class SparseMoE(nn.Module):
         super().__init__()
 
         hidden_size = config.hidden_size
-
 
         self.num_experts = config.num_experts
         self.top_k = config.num_experts_per_tok
@@ -148,9 +147,6 @@ class ScatterMoE(nn.Module):
             final_hidden_states = final_hidden_states.reshape(batch_size, sequence_length, hidden_dim)
         return final_hidden_states, router_logits
 
-from ...enums import InitMethod
-import math
-from ...modeling_utils import ParameterizedLinear, get_activation_function, is_glu
 
 class ScatterMoEMLP(nn.Module):
     def __init__(self, config: MoEDolomiteConfig) -> None:
@@ -170,9 +166,7 @@ class ScatterMoEMLP(nn.Module):
         self.top_k = config.num_experts_per_tok
 
         self.c_fc = ParallelExperts(
-            self.num_experts,
-            hidden_size,
-            2 * intermediate_size if is_glu(activation_function) else intermediate_size
+            self.num_experts, hidden_size, 2 * intermediate_size if is_glu(activation_function) else intermediate_size
         )
         # ParameterizedLinear(
         #     hidden_size,
@@ -189,24 +183,34 @@ class ScatterMoEMLP(nn.Module):
 
         self.reset_parameters()
 
-    def forward(self, hidden_states: torch.Tensor, routing_weights: torch.Tensor, selected_experts: torch.Tensor) -> torch.Tensor:
+    def forward(
+        self, hidden_states: torch.Tensor, routing_weights: torch.Tensor, selected_experts: torch.Tensor
+    ) -> torch.Tensor:
         with torch.no_grad():
             sorted_expert_idxs, sorted_scattered_idxs = scattermoe.kernels.ops.flatten_and_sort(selected_experts)
-            padded_block_idxs, expert_offsets = \
-                scattermoe.kernels.ops.padded_block_indices(sorted_expert_idxs, self.num_experts)
+            padded_block_idxs, expert_offsets = scattermoe.kernels.ops.padded_block_indices(
+                sorted_expert_idxs, self.num_experts
+            )
 
         hidden_states = self.c_fc(
-            hidden_states, self.top_k,
-            sorted_expert_idxs, sorted_scattered_idxs,
-            padded_block_idxs, expert_offsets,
-            grouped_out=True
+            hidden_states,
+            self.top_k,
+            sorted_expert_idxs,
+            sorted_scattered_idxs,
+            padded_block_idxs,
+            expert_offsets,
+            grouped_out=True,
         )
 
         hidden_states = self.act(hidden_states)
 
         hidden_states = self.c_proj(
-            hidden_states, 1, sorted_expert_idxs, sorted_scattered_idxs,
-            padded_block_idxs, expert_offsets,
+            hidden_states,
+            1,
+            sorted_expert_idxs,
+            sorted_scattered_idxs,
+            padded_block_idxs,
+            expert_offsets,
             grouped_in=True,
             gates=routing_weights,
         )

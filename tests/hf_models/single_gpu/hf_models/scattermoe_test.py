@@ -30,7 +30,7 @@ class ScatterMoETEst(TestCommons):
         config.add_bias = False
         config.n_layer = 1
         naive_model = self.from_config(config).to(device)
-        config.use_scattermoe = True 
+        config.use_scattermoe = True
         scatter_model = self.from_config(config).to(device)
         print(naive_model)
         print(scatter_model)
@@ -66,4 +66,3 @@ class ScatterMoETEst(TestCommons):
             rtol_bfloat16=0,
             atol_bfloat16=1e-4,
         )
-

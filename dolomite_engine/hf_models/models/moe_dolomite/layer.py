@@ -5,7 +5,7 @@ from transformers import DynamicCache
 from ...enums import AttentionHeadType
 from ...modeling_utils import get_attention_module, get_normalization_function
 from .config import MoEDolomiteConfig
-from .moe import SparseMoE, ScatterMoE
+from .moe import ScatterMoE, SparseMoE
 
 
 class SparseMoEBlock(nn.Module):
