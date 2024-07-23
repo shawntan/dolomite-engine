@@ -132,6 +132,7 @@ class _ParameterizedScatteredExperts(ParameterizedLinear):
         self.std = std
 
         self.weight = nn.Parameter(torch.empty(num_experts, output_size, input_size))
+        self.bias = None
 
         self.reset_parameters()
 
