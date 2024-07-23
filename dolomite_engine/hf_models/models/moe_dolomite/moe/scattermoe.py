@@ -2,12 +2,12 @@ import math
 
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
 
 from .....utils import is_scattermoe_available
 from ....enums import InitMethod
 from ....modeling_utils import ParameterizedLinear, get_activation_function, is_glu
 from ..config import MoEDolomiteConfig
+from .eager import SparseMoE
 
 
 if is_scattermoe_available():
@@ -15,50 +15,35 @@ if is_scattermoe_available():
     from scattermoe.parallel_experts import ParallelExperts
 
 
-class ScatterMoE(nn.Module):
+class ScatterMoE(SparseMoE):
     def __init__(self, config: MoEDolomiteConfig, use_padding_free_transformer: bool) -> None:
-        super().__init__()
+        nn.Module.__init__(self)
 
-        hidden_size = config.hidden_size
+        self.hidden_size = config.hidden_size
 
         self.num_experts = config.num_experts
         self.top_k = config.num_experts_per_tok
         self.normalize_expert_weights = config.normalize_expert_weights
 
         # router
-        self.gate = ParameterizedLinear(hidden_size, self.num_experts, bias=False)
+        self.gate = ParameterizedLinear(self.hidden_size, self.num_experts, bias=False)
         self.experts = _ScatterMoEMLP(config)
 
         self.use_padding_free_transformer = use_padding_free_transformer
 
     def forward(self, hidden_states: torch.Tensor) -> torch.Tensor:
-        if self.use_padding_free_transformer:
-            _, hidden_dim = hidden_states.shape
-        else:
-            batch_size, sequence_length, hidden_dim = hidden_states.shape
-            hidden_states = hidden_states.view(-1, hidden_dim)
+        if not self.use_padding_free_transformer:
+            batch_size, sequence_length, _ = hidden_states.shape
+            hidden_states = hidden_states.view(-1, self.hidden_size)
 
-        # router_logits -> (batch_size * sequence_length, num_experts)
-        router_logits = self.gate(hidden_states)
+        router_logits, routing_weights, selected_experts = self._compute_routing_weights(hidden_states)
 
-        routing_weights = F.softmax(router_logits, dim=-1, dtype=torch.float)
-
-        if self.top_k == 1:
-            routing_weights, selected_experts = routing_weights.max(dim=-1, keepdim=True)
-        else:
-            routing_weights, selected_experts = routing_weights.topk(self.top_k, dim=-1)
-
-        if self.normalize_expert_weights:
-            routing_weights = routing_weights / routing_weights.sum(dim=-1, keepdim=True)
-
-        # we cast back to the input dtype
-        routing_weights = routing_weights.to(hidden_states.dtype)
-        final_hidden_states = self.experts(hidden_states, routing_weights, selected_experts)
+        hidden_states = self.experts(hidden_states, routing_weights, selected_experts)
 
         if not self.use_padding_free_transformer:
-            final_hidden_states = final_hidden_states.reshape(batch_size, sequence_length, hidden_dim)
+            hidden_states = hidden_states.reshape(batch_size, sequence_length, self.hidden_size)
 
-        return final_hidden_states, router_logits
+        return hidden_states, router_logits
 
 
 class _ScatterMoEMLP(nn.Module):
