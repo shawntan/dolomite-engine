@@ -7,12 +7,12 @@ from .....utils import is_scattermoe_available
 from ....enums import InitMethod
 from ....modeling_utils import ParameterizedLinear, get_activation_function, is_glu
 from ..config import MoEDolomiteConfig
-from .eager import SparseMoE
+from .base import SparseMoE
 
 
 if is_scattermoe_available():
     import scattermoe
-    from scattermoe.parallel_experts import ParallelExperts
+    from scattermoe.parallel_experts import parallel_linear as scattered_experts
 
 
 class ScatterMoE(SparseMoE):
@@ -65,23 +65,24 @@ class _ScatterMoEMLP(nn.Module):
         self.num_experts = config.num_experts
         self.top_k = config.num_experts_per_tok
 
-        self.c_fc = ParallelExperts(
-            self.num_experts, hidden_size, 2 * intermediate_size if is_glu(activation_function) else intermediate_size
+        std = self.initializer_range
+        if self.init_method == InitMethod.mup:
+            std /= math.sqrt(self.m_width)
+        self.c_fc = _ParameterizedScatteredExperts(
+            self.num_experts,
+            hidden_size,
+            2 * intermediate_size if is_glu(activation_function) else intermediate_size,
+            std=std,
         )
-        # ParameterizedLinear(
-        #     hidden_size,
-        #     2 * intermediate_size if is_glu(activation_function) else intermediate_size,
-        #     bias=add_bias,
-        #     std=std,
-        # )
 
         self.act = get_activation_function(activation_function)
 
-        self.c_proj = ParallelExperts(self.num_experts, intermediate_size, hidden_size)
-        # ParameterizedLinear(intermediate_size, hidden_size, bias=add_bias, std=std)
-        self.dropout = nn.Identity() if residual_dropout == 0 else nn.Dropout(residual_dropout)
+        std = self.initializer_range / math.sqrt(2 * self.n_layer)
+        if self.init_method == InitMethod.mup:
+            std /= math.sqrt(self.m_width)
+        self.c_proj = _ParameterizedScatteredExperts(self.num_experts, intermediate_size, hidden_size, std=std)
 
-        self.reset_parameters()
+        self.dropout = nn.Identity() if residual_dropout == 0 else nn.Dropout(residual_dropout)
 
     def forward(
         self, hidden_states: torch.Tensor, routing_weights: torch.Tensor, selected_experts: torch.Tensor
@@ -119,14 +120,51 @@ class _ScatterMoEMLP(nn.Module):
 
         return hidden_states
 
-    @torch.no_grad()
-    def reset_parameters(self) -> None:
-        std = self.initializer_range
-        if self.init_method == InitMethod.mup:
-            std /= math.sqrt(self.m_width)
-        nn.init.normal_(self.c_fc.weight, mean=0, std=std)
 
-        std = self.initializer_range / math.sqrt(2 * self.n_layer)
-        if self.init_method == InitMethod.mup:
-            std /= math.sqrt(self.m_width)
-        nn.init.normal_(self.c_proj.weight, mean=0, std=std)
+class _ParameterizedScatteredExperts(ParameterizedLinear):
+    def __init__(self, num_experts: int, input_size: int, output_size: int, std: float | None = None) -> None:
+        nn.Module.__init__(self)
+
+        self.num_experts = num_experts
+        self.input_size = input_size
+        self.output_size = output_size
+
+        self.std = std
+
+        self.weight = nn.Parameter(torch.empty(num_experts, output_size, input_size))
+
+        self.reset_parameters()
+
+    def reset_parameters(self) -> None:
+        nn.init.uniform_(self.weight, -1.0 / self.weight.size(2), 1.0 / self.weight.size(2))
+
+    def forward(
+        self,
+        inputs,
+        k,
+        sorted_expert_idxs,
+        sorted_scattered_idxs,
+        padded_block_idxs,
+        expert_offsets,
+        gates=None,
+        grouped_in=False,
+        grouped_out=False,
+    ):
+        results = scattered_experts(
+            inputs,
+            self.weight.permute(0, 2, 1),
+            k,
+            sorted_expert_idxs,
+            sorted_scattered_idxs,
+            padded_block_idxs,
+            expert_offsets,
+            gates,
+            grouped_in,
+            grouped_out,
+        )
+        return results
+
+    def extra_repr(self):
+        return "num_experts={}, input_size={}, output_size={}".format(
+            self.num_experts, self.input_size, self.output_size
+        )

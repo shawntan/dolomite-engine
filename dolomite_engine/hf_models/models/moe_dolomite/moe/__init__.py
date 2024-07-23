@@ -1,6 +1,6 @@
 from ..config import MoEDolomiteConfig
-from .eager import SparseMoE
-from .scattermoe import ScatterMoE
+from .base import SparseMoE
+from .scatter import ScatterMoE
 
 
 _MOE_MODULES = {"eager": SparseMoE, "scattermoe": ScatterMoE}
