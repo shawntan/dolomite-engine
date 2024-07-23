@@ -3,7 +3,6 @@ from parameterized import parameterized
 from transformers import set_seed
 
 from dolomite_engine.hf_models import AttentionHeadType, PositionEmbeddingType
-from dolomite_engine.hf_models.models.moe_dolomite.layer import SparseMoEBlock
 
 from ...test_common import TestCommons
 

@@ -1,5 +1,4 @@
 import math
-from copy import deepcopy
 
 import torch
 import torch.nn as nn
@@ -21,22 +20,19 @@ class ScatterMoE(nn.Module):
         super().__init__()
 
         hidden_size = config.hidden_size
+
         self.num_experts = config.num_experts
         self.top_k = config.num_experts_per_tok
         self.normalize_expert_weights = config.normalize_expert_weights
 
         # router
         self.gate = ParameterizedLinear(hidden_size, self.num_experts, bias=False)
-
-        config_copy = deepcopy(config)
-        config_copy.add_bias = False
         self.experts = _ScatterMoEMLP(config)
-        del config_copy
-        assert not config.add_bias, "ScatterMoE does not support add_bias"
-        self._use_padding_free_transformer = use_padding_free_transformer
+
+        self.use_padding_free_transformer = use_padding_free_transformer
 
     def forward(self, hidden_states: torch.Tensor) -> torch.Tensor:
-        if self._use_padding_free_transformer:
+        if self.use_padding_free_transformer:
             _, hidden_dim = hidden_states.shape
         else:
             batch_size, sequence_length, hidden_dim = hidden_states.shape
@@ -53,13 +49,15 @@ class ScatterMoE(nn.Module):
             routing_weights, selected_experts = routing_weights.topk(self.top_k, dim=-1)
 
         if self.normalize_expert_weights:
-            routing_weights /= routing_weights.sum(dim=-1, keepdim=True)
+            routing_weights = routing_weights / routing_weights.sum(dim=-1, keepdim=True)
 
         # we cast back to the input dtype
         routing_weights = routing_weights.to(hidden_states.dtype)
         final_hidden_states = self.experts(hidden_states, routing_weights, selected_experts)
-        if not self._use_padding_free_transformer:
+
+        if not self.use_padding_free_transformer:
             final_hidden_states = final_hidden_states.reshape(batch_size, sequence_length, hidden_dim)
+
         return final_hidden_states, router_logits
 
 
@@ -71,6 +69,8 @@ class _ScatterMoEMLP(nn.Module):
         intermediate_size = config.n_inner
         activation_function = config.activation_function
         residual_dropout = config.resid_pdrop
+
+        assert not config.add_bias, "ScatterMoE does not support add_bias"
 
         self.init_method = InitMethod(config.init_method)
         self.initializer_range = config.initializer_range
