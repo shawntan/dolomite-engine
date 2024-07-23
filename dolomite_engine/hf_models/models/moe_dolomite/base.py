@@ -67,10 +67,10 @@ class MoEDolomiteModel(MoEDolomitePreTrainedModel, GPTDolomiteModel):
             [
                 SparseMoEBlock(
                     config,
-                    self.normalization_implementation,
-                    self.attention_implementation,
-                    self._use_padding_free_transformer,
-                    self.moe_implementation,
+                    normalization_implementation=self.normalization_implementation,
+                    attention_implementation=self.attention_implementation,
+                    use_padding_free_transformer=self._use_padding_free_transformer,
+                    moe_implementation=self.moe_implementation,
                     layer_idx=i,
                 )
                 for i in range(config.num_hidden_layers)
