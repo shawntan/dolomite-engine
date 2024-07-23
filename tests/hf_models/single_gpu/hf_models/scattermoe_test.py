@@ -10,20 +10,22 @@ from ...test_common import TestCommons
 SEED = 1234
 
 
-class ScatterMoETEst(TestCommons):
+class ScatterMoETest(TestCommons):
     def test_scattermoe(self) -> None:
+        device = torch.device("cuda")
+        self.skip_test_if_device_unavailable(device)
 
         set_seed(SEED)
-        device = torch.device("cuda")
-        attention_head_type: AttentionHeadType = AttentionHeadType.mha
-        position_embedding_type: PositionEmbeddingType = PositionEmbeddingType.rope
+
         input_ids, attention_mask, labels = self.get_dummy_inputs(device)
-        config = self.get_moe_test_config(attention_head_type, position_embedding_type)
-        config.add_bias = False
-        config.n_layer = 1
-        naive_model = self.from_config(config).to(device)
-        config.use_scattermoe = True
-        scatter_model = self.from_config(config).to(device)
+
+        config = self.get_moe_test_config(
+            AttentionHeadType.mha, PositionEmbeddingType.rope, num_layers=1, add_bias=False
+        )
+
+        naive_model = self.from_config(config, moe_implementation="eager").to(device)
+        scatter_model = self.from_config(config, moe_implementation="scattermoe").to(device)
+
         print(naive_model)
         print(scatter_model)
 
