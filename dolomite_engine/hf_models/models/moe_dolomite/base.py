@@ -15,8 +15,8 @@ class MoEDolomitePreTrainedModel(GPTDolomitePreTrainedModel):
     config_class = MoEDolomiteConfig
     _no_split_modules = ["SparseMoEBlock"]
 
-    def __init__(self, config: MoEDolomiteConfig, *inputs, **kwargs) -> None:
-        super().__init__(config, *inputs, **kwargs)
+    def __init__(self, config: MoEDolomiteConfig, *args, **kwargs) -> None:
+        GPTDolomitePreTrainedModel.__init__(self, config, *args, **kwargs)
 
         self.moe_implementation = kwargs.get("moe_implementation", "eager")
         assert self.moe_implementation in ["eager", "scattermoe"]
