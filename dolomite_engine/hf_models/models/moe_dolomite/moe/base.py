@@ -96,5 +96,5 @@ class SparseMoE(nn.Module):
         return router_logits, routing_weights, selected_experts
 
     def extra_repr(self) -> str | None:
-        if self.bias is not None:
+        if hasattr(self, "bias") and self.bias is not None:
             return f"(bias): Parameter(size={tuple(self.bias.size())})"
