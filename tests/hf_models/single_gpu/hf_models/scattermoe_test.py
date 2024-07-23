@@ -12,14 +12,7 @@ SEED = 1234
 
 
 class ScatterMoETEst(TestCommons):
-    # @parameterized.expand(
-    #     TestCommons.make_args_matrix(
-    #         TestCommons.get_all_devices(),
-    #     )
-    # )
-    def test_scattermoe(
-        self,
-    ) -> None:
+    def test_scattermoe(self) -> None:
 
         set_seed(SEED)
         device = torch.device("cuda")
