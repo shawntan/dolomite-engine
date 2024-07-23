@@ -135,9 +135,6 @@ class _ParameterizedScatteredExperts(ParameterizedLinear):
 
         self.reset_parameters()
 
-    def reset_parameters(self) -> None:
-        nn.init.uniform_(self.weight, -1.0 / self.weight.size(2), 1.0 / self.weight.size(2))
-
     def forward(
         self,
         inputs,
