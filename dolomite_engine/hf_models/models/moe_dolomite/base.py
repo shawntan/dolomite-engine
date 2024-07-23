@@ -15,6 +15,12 @@ class MoEDolomitePreTrainedModel(GPTDolomitePreTrainedModel):
     config_class = MoEDolomiteConfig
     _no_split_modules = ["SparseMoEBlock"]
 
+    def __init__(self, config: MoEDolomiteConfig, *inputs, **kwargs) -> None:
+        super().__init__(config, *inputs, **kwargs)
+
+        self.moe_implementation = kwargs.get("moe_implementation", "eager")
+        assert self.moe_implementation in ["eager", "scattermoe"]
+
     def get_moe_loss(
         self,
         lm_logits: torch.Tensor,
@@ -64,6 +70,7 @@ class MoEDolomiteModel(MoEDolomitePreTrainedModel, GPTDolomiteModel):
                     self.normalization_implementation,
                     self.attention_implementation,
                     self._use_padding_free_transformer,
+                    self.moe_implementation,
                     layer_idx=i,
                 )
                 for i in range(config.num_hidden_layers)
