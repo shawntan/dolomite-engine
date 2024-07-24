@@ -4,16 +4,10 @@ import torch
 import torch.distributed
 from transformers import set_seed
 
-from dolomite_engine.hf_models import AttentionHeadType, GPTDolomiteConfig, GPTDolomiteForCausalLM_TP
 from dolomite_engine.hf_models.modeling_utils_TP.linear import ColumnParallelLinear
-from dolomite_engine.hf_models.modeling_utils_TP.TP import tensor_parallel_split_safetensor_slice
 from dolomite_engine.hf_models.modeling_utils.linear import ParameterizedLinear
 from dolomite_engine.utils import (
-    CUDA_RNGStatesTracker,
     ProcessGroupManager,
-    SafeTensorsWeightsManager,
-    set_cuda_rng_tracker,
-    string_to_torch_dtype,
 )
 
 
