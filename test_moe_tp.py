@@ -62,12 +62,9 @@ model_tp = _ColumnParallelScatteredExperts(
     std=std
 )
 
-print("Rank", rank, "post init")
 model.load_state_dict({"weight": weight})
-print("something")
 weight = weight.view(num_experts, tp_size, -1, in_features)
 model_tp.load_state_dict({"weight": weight[:, rank]})
-print("Rank", rank, "waiting...")
 
 torch.distributed.barrier()
 
@@ -104,9 +101,11 @@ output_ref = model(
     expert_offsets,
     gates=None,
     grouped_in=False,
-    grouped_ou=False,
+    grouped_out=False,
 )
-output_ref_chunk = output_ref.view(batch_size, tp_size, -1)[:, rank]
+print(output_tp.size(), output_ref.size())
+
+output_ref_chunk = output_ref.view(batch_size * k, tp_size, -1)[:, rank]
 print((output_tp - output_ref_chunk).abs().max())
 
 ProcessGroupManager.destroy_process_groups()

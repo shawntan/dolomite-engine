@@ -121,6 +121,7 @@ class _ParameterizedScatteredExperts(ParameterizedLinear):
         grouped_in=False,
         grouped_out=False,
     ):
+
         results = scattered_experts(
             inputs,
             self.weight.permute(0, 2, 1),
