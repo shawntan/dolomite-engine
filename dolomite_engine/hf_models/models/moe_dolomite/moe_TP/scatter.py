@@ -219,6 +219,11 @@ class _ColumnParallelScatteredExperts(_ParameterizedScatteredExperts):
         )
         return results
 
+    def load_state_dict(self, state_dict: Mapping[str, Any], strict: bool = True, assign: bool = False) -> None:
+        state_dict = modify_state_dict_to_dtensor_dict(self, state_dict)
+        return super().load_state_dict(state_dict, strict, assign)
+
+
 
 class _RowParallelScatteredExperts(_ParameterizedScatteredExperts):
     def __init__(self, num_experts: int, input_size: int, output_size: int, std: float | None = None) -> None:
@@ -274,3 +279,8 @@ class _RowParallelScatteredExperts(_ParameterizedScatteredExperts):
         )
         results = dtensor_to_tensor(results, desired_placement=self.output_placement)
         return results
+
+    def load_state_dict(self, state_dict: Mapping[str, Any], strict: bool = True, assign: bool = False) -> None:
+        state_dict = modify_state_dict_to_dtensor_dict(self, state_dict)
+        return super().load_state_dict(state_dict, strict, assign)
+
