@@ -45,12 +45,14 @@ class ColumnParallelLinear(ParameterizedLinear):
             dtype=dtype,
             std=std,
         )
+        weight_size = self.weight.size()
 
         self.weight = nn.Parameter(
             DTensor.from_local(
                 self.weight, device_mesh=ProcessGroupManager.get_tensor_parallel_mesh(), placements=[Shard(0)]
             )
         )
+        print("_ColPar", weight_size, 'self.weight', self.weight.size())
         if bias:
             self.bias = nn.Parameter(
                 DTensor.from_local(

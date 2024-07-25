@@ -183,11 +183,13 @@ class _ColumnParallelScatteredExperts(_ParameterizedScatteredExperts):
             input_size=input_size,
             std=std,
         )
+        weight_size = self.weight.size()
         self.weight = nn.Parameter(
             DTensor.from_local(
                 self.weight, device_mesh=ProcessGroupManager.get_tensor_parallel_mesh(), placements=[Shard(1)]
             )
         )
+        print("_ColPar", weight_size, 'self.weight', self.weight.size())
         self.input_placement = Replicate()
 
     def forward(
