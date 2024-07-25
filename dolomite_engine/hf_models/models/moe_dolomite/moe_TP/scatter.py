@@ -202,15 +202,10 @@ class _ColumnParallelScatteredExperts(_ParameterizedScatteredExperts):
         grouped_in=False,
         grouped_out=False,
     ):
-        inputs = tensor_to_dtensor(inputs, current_placement=self.input_placement)
-        sorted_expert_idxs = tensor_to_dtensor(sorted_expert_idxs, current_placement=self.input_placement)
-        sorted_scattered_idxs = tensor_to_dtensor(sorted_scattered_idxs, current_placement=self.input_placement)
-        padded_block_idxs = tensor_to_dtensor(padded_block_idxs, current_placement=self.input_placement)
-        expert_offsets = tensor_to_dtensor(expert_offsets, current_placement=self.input_placement)
-        gates = tensor_to_dtensor(gates, current_placement=self.input_placement)
+        weight = dtensor_to_tensor(self.weight, desired_placement=Shard(1))
         results = scattered_experts(
             inputs,
-            self.weight.permute(0, 2, 1),
+            weight.permute(0, 2, 1),
             k,
             sorted_expert_idxs,
             sorted_scattered_idxs,
@@ -220,7 +215,6 @@ class _ColumnParallelScatteredExperts(_ParameterizedScatteredExperts):
             grouped_in,
             grouped_out,
         )
-        results = dtensor_to_tensor(results, desired_placement=Shard(-1))
         return results
 
 
