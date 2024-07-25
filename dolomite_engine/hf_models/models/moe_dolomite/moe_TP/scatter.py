@@ -184,11 +184,15 @@ class _ColumnParallelScatteredExperts(_ParameterizedScatteredExperts):
             std=std,
         )
         weight_size = self.weight.size()
+        print("_ColPar", weight_size)
+        self.weight = nn.Parameter(self.weight.to(torch.cuda.current_device()))
         self.weight = nn.Parameter(
             DTensor.from_local(
-                self.weight, device_mesh=ProcessGroupManager.get_tensor_parallel_mesh(), placements=[Shard(1)]
+                self.weight, device_mesh=ProcessGroupManager.get_tensor_parallel_mesh(), placements=[Shard(1)],
+                run_check=False
             )
         )
+
         print("_ColPar", weight_size, 'self.weight', self.weight.size())
         self.input_placement = Replicate()
 

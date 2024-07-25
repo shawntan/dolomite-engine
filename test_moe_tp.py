@@ -60,9 +60,9 @@ model_tp = _ColumnParallelScatteredExperts(
     input_size=in_features,
     output_size=out_features,
     std=std
-)
+).to(torch.device(torch.cuda.current_device()))
 
-
+print("Rank", rank, "post init")
 model.load_state_dict({"weight": weight})
 weight = weight.view(num_experts, tp_size, -1, in_features)
 model_tp.load_state_dict({"weight": weight[:, rank]})
