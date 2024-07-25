@@ -2,6 +2,7 @@ import math
 from typing import Any, Mapping
 
 import torch
+import torch.distributed
 import torch.nn as nn
 from torch.distributed._tensor.api import DTensor
 from torch.distributed._tensor.placement_types import Replicate, Shard
@@ -184,8 +185,7 @@ class _ColumnParallelScatteredExperts(_ParameterizedScatteredExperts):
             std=std,
         )
         weight_size = self.weight.size()
-        print("_ColPar", weight_size)
-        self.weight = nn.Parameter(self.weight.to(torch.cuda.current_device()))
+        # print("_ColPar", weight_size, torch.cuda.current_device(), torch.distributed.get_rank(), ProcessGroupManager.get_tensor_parallel_rank())
         self.weight = nn.Parameter(
             DTensor.from_local(
                 self.weight, device_mesh=ProcessGroupManager.get_tensor_parallel_mesh(), placements=[Shard(1)],

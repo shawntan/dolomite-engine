@@ -104,7 +104,7 @@ class _ParameterizedScatteredExperts(ParameterizedLinear):
 
         self.std = std
 
-        self.weight = nn.Parameter(torch.empty(num_experts, output_size, input_size))
+        self.weight = nn.Parameter(torch.empty(num_experts, output_size, input_size, device=torch.cuda.current_device()))
         self.bias = None
 
         self.reset_parameters()

@@ -21,7 +21,7 @@ ProcessGroupManager(tensor_parallel_size=tp_size)
 # cuda_rng_tracker.add("tensor-parallel-seed", 42)
 # set_cuda_rng_tracker(cuda_rng_tracker)
 tmp_path = "tmp/"
-torch_dtype = torch.bfloat16
+torch_dtype = torch.float32
 num_experts = 8
 k = 2
 in_features = 1024
@@ -60,10 +60,11 @@ model_tp = _ColumnParallelScatteredExperts(
     input_size=in_features,
     output_size=out_features,
     std=std
-).to(torch.device(torch.cuda.current_device()))
+)
 
 print("Rank", rank, "post init")
 model.load_state_dict({"weight": weight})
+print("something")
 weight = weight.view(num_experts, tp_size, -1, in_features)
 model_tp.load_state_dict({"weight": weight[:, rank]})
 print("Rank", rank, "waiting...")
