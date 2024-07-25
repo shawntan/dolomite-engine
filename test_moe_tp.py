@@ -84,8 +84,28 @@ model_tp.eval()
 model.eval()
 set_seed(42)
 
-output_tp = model_tp(input_tensor)
-output_ref = model(input_tensor)
+output_tp = model_tp(
+    input_tensor,
+    k,
+    sorted_expert_idxs,
+    sorted_scattered_idxs,
+    padded_block_idxs,
+    expert_offsets,
+    gates=None,
+    grouped_in=False,
+    grouped_out=False,
+)
+output_ref = model(
+    input_tensor,
+    k,
+    sorted_expert_idxs,
+    sorted_scattered_idxs,
+    padded_block_idxs,
+    expert_offsets,
+    gates=None,
+    grouped_in=False,
+    grouped_ou=False,
+)
 output_ref_chunk = output_ref.view(batch_size, tp_size, -1)[:, rank]
 print((output_tp - output_ref_chunk).abs().max())
 
