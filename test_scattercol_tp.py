@@ -94,8 +94,9 @@ output_tp = model_tp(
     expert_offsets,
     gates=None,
     grouped_in=False,
-    grouped_out=False,
+    grouped_out=True,
 )
+
 output_ref = model(
     input_tensor,
     k,
@@ -105,7 +106,7 @@ output_ref = model(
     expert_offsets,
     gates=None,
     grouped_in=False,
-    grouped_out=False,
+    grouped_out=True,
 )
 
 output_ref_chunk = output_ref.view(batch_size * k, tp_size, -1)[:, rank]
