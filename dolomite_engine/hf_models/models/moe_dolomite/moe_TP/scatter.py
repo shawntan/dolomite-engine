@@ -282,6 +282,7 @@ class _RowParallelScatteredExperts(_ParameterizedScatteredExperts):
         grouped_in=False,
         grouped_out=False,
     ):
+        print(inputs.size())
         weight = dtensor_to_tensor(self.weight, desired_placement=Shard(2))
         results = scattered_experts(
             inputs,

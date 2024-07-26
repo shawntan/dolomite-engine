@@ -8,7 +8,7 @@ from torch.distributed._tensor.placement_types import Replicate, Shard
 from transformers import set_seed
 
 from dolomite_engine.hf_models.models.moe_dolomite.moe.scatter import _ParameterizedScatteredExperts
-from dolomite_engine.hf_models.models.moe_dolomite.moe_TP.scatter import _ColumnParallelScatteredExperts
+from dolomite_engine.hf_models.models.moe_dolomite.moe_TP.scatter import _RowParallelScatteredExperts
 from dolomite_engine.utils import ProcessGroupManager
 
 
@@ -39,10 +39,11 @@ model = _ParameterizedScatteredExperts(
     dtype=torch_dtype,
 )
 
-if torch.distributed.get_rank() == 0:
-    print("Initializing on device 0.")
+rank = torch.distributed.get_rank()
+if rank == 0:
+    print("Initializing on device ", rank)
     weight = model.weight.data
-    input_tensor = torch.randn(batch_size, in_features, device=torch.cuda.current_device(), dtype=torch_dtype)
+    input_tensor = torch.randn(k * batch_size, in_features, device=torch.cuda.current_device(), dtype=torch_dtype)
     logits = torch.randn(batch_size, num_experts, device=torch.cuda.current_device(), dtype=torch_dtype)
     expert_p, expert_idxs = torch.topk(torch.softmax(logits, dim=-1), k=k)
     expert_idxs = expert_idxs.to(dtype=torch.int32).to(device=torch.cuda.current_device())
@@ -50,19 +51,17 @@ else:
     weight = torch.empty(
         (num_experts, out_features, in_features), dtype=torch_dtype, device=torch.cuda.current_device()
     )
-    input_tensor = torch.empty((batch_size, in_features), device=torch.cuda.current_device(), dtype=torch_dtype)
+    input_tensor = torch.empty((k * batch_size, in_features), device=torch.cuda.current_device(), dtype=torch_dtype)
     expert_idxs = torch.empty((batch_size, k), device=torch.cuda.current_device(), dtype=torch.int32)
     expert_p = torch.empty((batch_size, k), device=torch.cuda.current_device(), dtype=torch_dtype)
 
 
-
-rank = torch.distributed.get_rank()
 torch.distributed.broadcast(weight, 0)
 torch.distributed.broadcast(input_tensor, 0)
 torch.distributed.broadcast(expert_idxs, 0)
 torch.distributed.broadcast(expert_p, 0)
 
-model_tp = _ColumnParallelScatteredExperts(
+model_tp = _RowParallelScatteredExperts(
     num_experts=num_experts,
     input_size=in_features,
     output_size=out_features,
@@ -72,8 +71,8 @@ model_tp = _ColumnParallelScatteredExperts(
 )
 
 model.load_state_dict({"weight": weight})
-weight = weight.view(num_experts, tp_size, -1, in_features)
-model_tp.load_state_dict({"weight": weight[:, rank]})
+weight = weight.view(num_experts, out_features, tp_size, -1)
+model_tp.load_state_dict({"weight": weight[..., rank, :]})
 
 torch.distributed.barrier()
 
@@ -89,29 +88,29 @@ model.eval()
 set_seed(42)
 
 output_tp = model_tp(
-    input_tensor,
-    k,
+    input_tensor.view(k * batch_size, tp_size, -1)[:, rank], 1,
     sorted_expert_idxs,
     sorted_scattered_idxs,
     padded_block_idxs,
     expert_offsets,
-    gates=None,
-    grouped_in=False,
-    grouped_out=False,
-)
-output_ref = model(
-    input_tensor,
-    k,
-    sorted_expert_idxs,
-    sorted_scattered_idxs,
-    padded_block_idxs,
-    expert_offsets,
-    gates=None,
-    grouped_in=False,
+    gates=expert_p,
+    grouped_in=True,
     grouped_out=False,
 )
 
-output_ref_chunk = output_ref.view(batch_size * k, tp_size, -1)[:, rank]
-print((output_tp - output_ref_chunk).abs().max())
+output_ref = model(
+    input_tensor, 1,
+    sorted_expert_idxs,
+    sorted_scattered_idxs,
+    padded_block_idxs,
+    expert_offsets,
+    gates=expert_p,
+    grouped_in=True,
+    grouped_out=False,
+)
+if rank == 0:
+    print(output_tp.size())
+    print(output_ref.size())
+print((output_tp - output_ref).abs().max())
 
 ProcessGroupManager.destroy_process_groups()
