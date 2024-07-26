@@ -95,8 +95,18 @@ class ScatterMoE(SparseMoE):
 
 
 class _ParameterizedScatteredExperts(ParameterizedLinear):
-    def __init__(self, num_experts: int, input_size: int, output_size: int, std: float | None = None) -> None:
+    def __init__(
+        self,
+        num_experts: int,
+        input_size: int,
+        output_size: int,
+        std: float | None = None,
+        device: torch.device | None = None,
+        dtype: torch.dtype | None = None,
+    ) -> None:
         nn.Module.__init__(self)
+        device = device if device is not None else torch.cuda.current_device()
+        dtype = dtype if dtype is not None else torch.get_default_dtype()
 
         self.num_experts = num_experts
         self.input_size = input_size
@@ -104,7 +114,7 @@ class _ParameterizedScatteredExperts(ParameterizedLinear):
 
         self.std = std
 
-        self.weight = nn.Parameter(torch.empty(num_experts, output_size, input_size, device=torch.cuda.current_device()))
+        self.weight = nn.Parameter(torch.empty((num_experts, output_size, input_size), device=device, dtype=dtype))
         self.bias = None
 
         self.reset_parameters()
@@ -121,7 +131,6 @@ class _ParameterizedScatteredExperts(ParameterizedLinear):
         grouped_in=False,
         grouped_out=False,
     ):
-
         results = scattered_experts(
             inputs,
             self.weight.permute(0, 2, 1),

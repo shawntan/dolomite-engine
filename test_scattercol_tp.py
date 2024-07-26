@@ -1,15 +1,16 @@
 import os
 
+import scattermoe
 import torch
 import torch.distributed
-from transformers import set_seed
 from torch.distributed._tensor.api import DTensor
 from torch.distributed._tensor.placement_types import Replicate, Shard
+from transformers import set_seed
 
 from dolomite_engine.hf_models.models.moe_dolomite.moe.scatter import _ParameterizedScatteredExperts
 from dolomite_engine.hf_models.models.moe_dolomite.moe_TP.scatter import _ColumnParallelScatteredExperts
 from dolomite_engine.utils import ProcessGroupManager
-import scattermoe
+
 
 set_seed(42)
 tp_size = int(os.getenv("WORLD_SIZE"))
@@ -33,9 +34,10 @@ model = _ParameterizedScatteredExperts(
     num_experts=num_experts,
     input_size=in_features,
     output_size=out_features,
-    std=std
+    std=std,
+    device=torch.device(torch.cuda.current_device()),
+    dtype=torch_dtype,
 )
-model.to(torch.cuda.current_device())
 
 if torch.distributed.get_rank() == 0:
     print("Initializing on device 0.")
@@ -45,7 +47,9 @@ if torch.distributed.get_rank() == 0:
     expert_p, expert_idxs = torch.topk(logits, k=k)
     expert_idxs = expert_idxs.to(dtype=torch.int32).to(device=torch.cuda.current_device())
 else:
-    weight = torch.empty((num_experts, out_features, in_features), dtype=torch_dtype, device=torch.cuda.current_device())
+    weight = torch.empty(
+        (num_experts, out_features, in_features), dtype=torch_dtype, device=torch.cuda.current_device()
+    )
     input_tensor = torch.empty((batch_size, in_features), device=torch.cuda.current_device(), dtype=torch_dtype)
     expert_idxs = torch.empty((batch_size, k), device=torch.cuda.current_device(), dtype=torch.int32)
 
@@ -59,7 +63,9 @@ model_tp = _ColumnParallelScatteredExperts(
     num_experts=num_experts,
     input_size=in_features,
     output_size=out_features,
-    std=std
+    std=std,
+    device=torch.device(torch.cuda.current_device()),
+    dtype=torch_dtype,
 )
 
 model.load_state_dict({"weight": weight})
@@ -70,9 +76,7 @@ torch.distributed.barrier()
 
 with torch.no_grad():
     sorted_expert_idxs, sorted_scattered_idxs = scattermoe.kernels.ops.flatten_and_sort(expert_idxs)
-    padded_block_idxs, expert_offsets = scattermoe.kernels.ops.padded_block_indices(
-        sorted_expert_idxs, num_experts
-    )
+    padded_block_idxs, expert_offsets = scattermoe.kernels.ops.padded_block_indices(sorted_expert_idxs, num_experts)
 
 
 # set model to eval mode
