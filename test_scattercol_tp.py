@@ -107,7 +107,6 @@ output_ref = model(
     grouped_in=False,
     grouped_out=False,
 )
-print(output_tp.size(), output_ref.size())
 
 output_ref_chunk = output_ref.view(batch_size * k, tp_size, -1)[:, rank]
 print((output_tp - output_ref_chunk).abs().max())
