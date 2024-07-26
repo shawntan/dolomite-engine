@@ -5,7 +5,7 @@ import torch
 import torch.distributed
 import torch.nn as nn
 from torch.distributed._tensor.api import DTensor
-from torch.distributed._tensor.placement_types import Replicate, Shard
+from torch.distributed._tensor.placement_types import Replicate, Shard, _Partial as Partial
 
 from .....utils import ProcessGroupManager, SafeTensorsWeightsManager, is_scattermoe_available
 from ....enums import InitMethod
@@ -237,7 +237,15 @@ class _ColumnParallelScatteredExperts(_ParameterizedScatteredExperts):
 
 
 class _RowParallelScatteredExperts(_ParameterizedScatteredExperts):
-    def __init__(self, num_experts: int, input_size: int, output_size: int, std: float | None = None) -> None:
+    def __init__(
+        self,
+        num_experts: int,
+        input_size: int,
+        output_size: int,
+        std: float | None = None,
+        device: torch.device | None = None,
+        dtype: torch.dtype | None = None,
+    ) -> None:
         tp_world_size = ProcessGroupManager.get_tensor_parallel_world_size()
         self.in_features_per_device = divide_if_divisible(
             input_size,
@@ -246,17 +254,21 @@ class _RowParallelScatteredExperts(_ParameterizedScatteredExperts):
         )
         super().__init__(
             num_experts=num_experts,
-            output_size=self.in_features_per_device,
-            input_size=input_size,
+            output_size=output_size,
+            input_size=self.in_features_per_device,
             std=std,
+            device=device,
+            dtype=dtype,
         )
         self.weight = nn.Parameter(
             DTensor.from_local(
-                self.weight, device_mesh=ProcessGroupManager.get_tensor_parallel_mesh(), placements=[Shard(2)]
+                self.weight,
+                device_mesh=ProcessGroupManager.get_tensor_parallel_mesh(),
+                placements=[Shard(2)],
+                run_check=False,
             )
         )
         self.input_placement = Shard(-1)
-        self.output_placement = Replicate()
 
     def forward(
         self,
@@ -270,9 +282,10 @@ class _RowParallelScatteredExperts(_ParameterizedScatteredExperts):
         grouped_in=False,
         grouped_out=False,
     ):
+        weight = dtensor_to_tensor(self.weight, desired_placement=Shard(2))
         results = scattered_experts(
             inputs,
-            self.weight.permute(0, 2, 1),
+            weight.permute(0, 2, 1),
             k,
             sorted_expert_idxs,
             sorted_scattered_idxs,
@@ -282,7 +295,8 @@ class _RowParallelScatteredExperts(_ParameterizedScatteredExperts):
             grouped_in,
             grouped_out,
         )
-        results = dtensor_to_tensor(results, desired_placement=self.output_placement)
+        results = tensor_to_dtensor(results, current_placement=Partial())
+        results = dtensor_to_tensor(results, desired_placement=Replicate())
         return results
 
     def load_state_dict(self, state_dict: Mapping[str, Any], strict: bool = True, assign: bool = False) -> None:
