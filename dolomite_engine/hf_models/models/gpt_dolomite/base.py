@@ -279,7 +279,6 @@ class GPTDolomiteModel(GPTDolomitePreTrainedModel):
 
         past_key_values = DynamicCache() if use_cache and past_key_values is None else past_key_values
         all_hidden_states = () if output_hidden_states else None
-        print(cu_seqlens)
         for block in self.h:
             if output_hidden_states:
                 all_hidden_states += (hidden_states,)

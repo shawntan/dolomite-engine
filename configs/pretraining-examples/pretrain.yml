@@ -8,12 +8,12 @@ datasets:
       data_cache_path: cache
       # Option 1: data loading using --data-path with single file
       data_path:
-        - /dccstor/obsidian_llm/yikang/datasets/wikimedia-1-en
+        - /proj/datasets/slim_pajama_gptneox_megatron/train/chunk1
       split: 98,1,1
       sequence_length: 4096
 
 tokenizer_args:
-  tokenizer_name: bigcode/starcoder
+  tokenizer_name: EleutherAI/gpt-neox-20b
 
 model_args:
   model_class: AutoModelForCausalLM
@@ -48,15 +48,15 @@ tuning_args:
 
 save_args:
   save_path: checkpoints/stickbreaking
-  save_interval: 1000
-load_args:
-  load_path: checkpoints/stickbreaking
+  save_interval: 5000
+    # load_args:
+    # load_path: checkpoints/stickbreaking
 
 training_parameters:
   num_training_steps: 1000000
-  eval_interval: 1000
-  micro_batch_size: 1
-  gradient_accumulation_steps: 8
+  eval_interval: 5000
+  micro_batch_size: 8
+  gradient_accumulation_steps: 4
 
 optimizer_args:
   class_name: TorchAdamW
