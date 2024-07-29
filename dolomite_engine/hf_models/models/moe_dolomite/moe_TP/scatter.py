@@ -5,7 +5,8 @@ import torch
 import torch.distributed
 import torch.nn as nn
 from torch.distributed._tensor.api import DTensor
-from torch.distributed._tensor.placement_types import Replicate, Shard, _Partial as Partial
+from torch.distributed._tensor.placement_types import Replicate, Shard
+from torch.distributed._tensor.placement_types import _Partial as Partial
 
 from .....utils import ProcessGroupManager, SafeTensorsWeightsManager, is_scattermoe_available
 from ....enums import InitMethod
@@ -40,19 +41,12 @@ class ReplicatedParallelLinear(ParameterizedLinear):
     ) -> None:
 
         super().__init__(
-            in_features=in_features,
-            out_features=out_features,
-            device=device,
-            dtype=dtype,
-            std=std,
-            bias=False
+            in_features=in_features, out_features=out_features, device=device, dtype=dtype, std=std, bias=False
         )
 
         self.weight = nn.Parameter(
             DTensor.from_local(
-                self.weight,
-                device_mesh=ProcessGroupManager.get_tensor_parallel_mesh(),
-                placements=[Replicate()]
+                self.weight, device_mesh=ProcessGroupManager.get_tensor_parallel_mesh(), placements=[Replicate()]
             )
         )
         self.input_placement = Replicate()
