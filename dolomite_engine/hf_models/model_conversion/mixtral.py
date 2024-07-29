@@ -102,7 +102,7 @@ def _import_state_dict_from_huggingface(
             f"model.layers.{layer_idx}.post_attention_layernorm.weight"
         )
 
-        state_dict[f"transformer.h.{layer_idx}.mlp.gate.weight"] = safetensors_weight_manager.get_tensor(
+        state_dict[f"transformer.h.{layer_idx}.mlp.gate.layer.weight"] = safetensors_weight_manager.get_tensor(
             f"model.layers.{layer_idx}.block_sparse_moe.gate.weight"
         )
 

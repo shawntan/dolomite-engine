@@ -73,6 +73,8 @@ class GraniteMoeParallelExperts(nn.Module):
         """
         super().__init__()
         self.weight = nn.Parameter(torch.empty(num_experts, output_size, input_size))
+        with torch.no_grad():
+            self.weight.normal_()
         self.num_experts = num_experts
         self.input_size = input_size
         self.output_size = output_size
@@ -159,9 +161,9 @@ class SparseMoE(nn.Module):
 
         expert_outputs = expert_outputs * batch_gates.unsqueeze(-1)  # [:, None]
         zeros = torch.zeros((total_q, self.hidden_size), dtype=expert_outputs.dtype, device=expert_outputs.device)
-        layer_output = zeros.index_add(0, batch_index, expert_outputs)
+        hidden_states = zeros.index_add(0, batch_index, expert_outputs)
         if hasattr(self, "bias"):
-            hidden_states = layer_output + self.bias
+            hidden_states = hidden_states + self.bias
 
         if not self.use_padding_free_transformer:
             hidden_states = hidden_states.reshape(batch_size, sequence_length, self.hidden_size)

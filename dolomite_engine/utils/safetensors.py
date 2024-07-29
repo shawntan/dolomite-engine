@@ -65,7 +65,11 @@ class SafeTensorsWeightsManager:
             if tn1 != tn2:
                 return False
 
+            print(tn1, tn2)
+
             if not self.get_tensor(tn1).equal(__value.get_tensor(tn2)):
+                print(tn1, tn2)
+                print((self.get_tensor(tn1) - __value.get_tensor(tn2)).abs().max())
                 return False
 
         return True
