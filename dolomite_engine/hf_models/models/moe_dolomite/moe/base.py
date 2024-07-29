@@ -95,6 +95,11 @@ class GraniteMoeParallelExperts(nn.Module):
         results = torch.cat(output_list, dim=0)
         return results
 
+    def extra_repr(self):
+        return "num_experts={}, in_features={}, out_features={}".format(
+            self.num_experts, self.input_size, self.output_size
+        )
+
 
 class SparseMoE(nn.Module):
     def __init__(
@@ -113,21 +118,22 @@ class SparseMoE(nn.Module):
         # self.gate = ParameterizedLinear(self.hidden_size, self.num_experts, bias=False)
         # self.experts = nn.ModuleList([MLP(config) for _ in range(self.num_experts)])
 
-        self.input_size = config.hidden_size
-        self.hidden_size = config.n_inner
+        self.hidden_size = config.hidden_size
+        self.intermediate_size = config.n_inner
+
         self.activation = get_activation_function(config.activation_function)
         if config.add_bias:
-            self.bias = torch.nn.Parameter(torch.empty(self.input_size))
+            self.bias = torch.nn.Parameter(torch.empty(self.hidden_size))
 
         self.c_fc = GraniteMoeParallelExperts(
             config.num_experts,
-            self.input_size,
-            2 * self.hidden_size if is_glu(config.activation_function) else self.hidden_size,
+            self.hidden_size,
+            2 * self.intermediate_size if is_glu(config.activation_function) else self.intermediate_size,
         )
-        self.c_proj = GraniteMoeParallelExperts(config.num_experts, self.hidden_size, self.input_size)
+        self.c_proj = GraniteMoeParallelExperts(config.num_experts, self.intermediate_size, self.hidden_size)
 
         self.gate = GraniteMoeTopKGating(
-            input_size=self.input_size,
+            input_size=self.hidden_size,
             num_experts=config.num_experts,
             top_k=config.num_experts_per_tok,
         )
@@ -137,6 +143,7 @@ class SparseMoE(nn.Module):
             batch_size, sequence_length, _ = hidden_states.shape
 
         hidden_states = hidden_states.view(-1, self.hidden_size)
+        total_q = hidden_states.size(0)
 
         # router_logits, routing_weights, selected_experts = self._compute_routing_weights(hidden_states)
         # hidden_states = self._compute_expert_outputs(hidden_states, routing_weights, selected_experts)
@@ -147,19 +154,17 @@ class SparseMoE(nn.Module):
         hidden_states = self.c_fc(expert_inputs, expert_size)
         # chunked_hidden_states = hidden_states.chunk(2, dim=-1)
         # hidden_states = self.activation(chunked_hidden_states[0]) * chunked_hidden_states[1]
-        hidden_states = self.act(hidden_states)
+        hidden_states = self.activation(hidden_states)
         expert_outputs = self.c_proj(hidden_states, expert_size)
 
         expert_outputs = expert_outputs * batch_gates.unsqueeze(-1)  # [:, None]
-        zeros = torch.zeros(
-            (hidden_states.size(0), self.input_size), dtype=expert_outputs.dtype, device=expert_outputs.device
-        )
+        zeros = torch.zeros((total_q, self.hidden_size), dtype=expert_outputs.dtype, device=expert_outputs.device)
         layer_output = zeros.index_add(0, batch_index, expert_outputs)
         if hasattr(self, "bias"):
             hidden_states = layer_output + self.bias
 
         if not self.use_padding_free_transformer:
-            hidden_states = hidden_states.reshape(batch_size, sequence_length, self.input_size)
+            hidden_states = hidden_states.reshape(batch_size, sequence_length, self.hidden_size)
             # hidden_states = hidden_states.reshape(batch_size, sequence_length, self.hidden_size)
 
         return hidden_states, router_logits
