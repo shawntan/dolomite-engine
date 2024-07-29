@@ -74,8 +74,8 @@ print("Output on rank", rank, (output_tp - output_ref).abs().max())
 
 set_seed(rank)
 grad = torch.rand_like(output_tp)
-print(rank, grad[0, 0])
 torch.distributed.barrier()
+
 output_tp.backward(grad)
 print(model_tp.weight.grad)
 ProcessGroupManager.destroy_process_groups()
