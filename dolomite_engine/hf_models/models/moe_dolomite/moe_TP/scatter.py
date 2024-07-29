@@ -45,21 +45,17 @@ class ReplicatedParallelLinear(ParameterizedLinear):
             device=device,
             dtype=dtype,
             std=std,
+            bias=False
         )
 
         self.weight = nn.Parameter(
             DTensor.from_local(
-                self.weight, device_mesh=ProcessGroupManager.get_tensor_parallel_mesh(), placements=[Replicate()]
+                self.weight,
+                device_mesh=ProcessGroupManager.get_tensor_parallel_mesh(),
+                placements=[Replicate()]
             )
         )
-
-        if sequence_parallel:
-            if use_padding_free_transformer:
-                self.input_placement = Shard(0)
-            else:
-                self.input_placement = Shard(1)
-        else:
-            self.input_placement = Replicate()
+        self.input_placement = Replicate()
 
     def forward(self, input: torch.Tensor) -> torch.Tensor:
         input = tensor_to_dtensor(input, current_placement=self.input_placement)
@@ -73,12 +69,10 @@ class ReplicatedParallelLinear(ParameterizedLinear):
         weight = safetensors_weight_manager.get_slice(prefix + "weight")
         weight = tensor_parallel_split_safetensor_slice(weight, dim=0)
         state_dict = {"weight": weight}
-
         if self.bias is not None:
             bias = safetensors_weight_manager.get_slice(prefix + "bias")
             bias = tensor_parallel_split_safetensor_slice(bias, dim=0)
             state_dict["bias"] = bias
-
         self.load_state_dict(state_dict)
 
     def extra_repr(self) -> str:
