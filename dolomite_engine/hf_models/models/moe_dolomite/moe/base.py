@@ -114,21 +114,21 @@ class SparseMoE(nn.Module):
         # self.experts = nn.ModuleList([MLP(config) for _ in range(self.num_experts)])
 
         self.input_size = config.hidden_size
-        self.hidden_size = config.intermediate_size
+        self.hidden_size = config.n_inner
         self.activation = get_activation_function(config.activation_function)
-        if config.mlp_bias:
+        if config.add_bias:
             self.bias = torch.nn.Parameter(torch.empty(self.input_size))
 
         self.c_fc = GraniteMoeParallelExperts(
-            config.num_local_experts,
+            config.num_experts,
             self.input_size,
             2 * self.hidden_size if is_glu(config.activation_function) else self.hidden_size,
         )
-        self.c_proj = GraniteMoeParallelExperts(config.num_local_experts, self.hidden_size, self.input_size)
+        self.c_proj = GraniteMoeParallelExperts(config.num_experts, self.hidden_size, self.input_size)
 
         self.gate = GraniteMoeTopKGating(
             input_size=self.input_size,
-            num_experts=config.num_local_experts,
+            num_experts=config.num_experts,
             top_k=config.num_experts_per_tok,
         )
 
