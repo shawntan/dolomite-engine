@@ -106,10 +106,8 @@ def _import_state_dict_from_huggingface(
             f"model.layers.{layer_idx}.block_sparse_moe.gate.weight"
         )
 
-        c_fc_weights = []
-        c_proj_weights = []
-        for expert_idx in range(num_experts):
-            c_fc_weights.append(
+        state_dict[f"transformer.h.{layer_idx}.mlp.c_fc.weight"] = torch.stack(
+            [
                 interleave_up_gate_tensor_for_mlp(
                     safetensors_weight_manager.get_tensor(
                         f"model.layers.{layer_idx}.block_sparse_moe.experts.{expert_idx}.w3.weight"
@@ -118,14 +116,18 @@ def _import_state_dict_from_huggingface(
                         f"model.layers.{layer_idx}.block_sparse_moe.experts.{expert_idx}.w1.weight"
                     ),
                 )
-            )
-            c_proj_weights.append(
+                for expert_idx in range(num_experts)
+            ]
+        )
+
+        state_dict[f"transformer.h.{layer_idx}.mlp.c_proj.weight"] = torch.stack(
+            [
                 safetensors_weight_manager.get_tensor(
                     f"model.layers.{layer_idx}.block_sparse_moe.experts.{expert_idx}.w2.weight"
                 )
-            )
-        state_dict[f"transformer.h.{layer_idx}.mlp.c_fc.weight"] = torch.stack(c_fc_weights)
-        state_dict[f"transformer.h.{layer_idx}.mlp.c_proj.weight"] = torch.stack(c_proj_weights)
+                for expert_idx in range(num_experts)
+            ]
+        )
 
         state_dict[f"transformer.h.{layer_idx}.attn.c_attn.weight"] = interleave_query_key_value_tensor_for_attention(
             safetensors_weight_manager.get_slice(f"model.layers.{layer_idx}.self_attn.q_proj.weight"),
