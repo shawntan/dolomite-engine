@@ -7,11 +7,11 @@ from ..config import MoEDolomiteConfig
 
 
 class TopKGating(ParameterizedLinear):
-    def __init__(self, hidden_size: int, num_experts: int, top_k: int) -> None:
+    def __init__(self, hidden_size: int, num_experts: int, top_k: int, std: float | None = None) -> None:
         self.num_experts = num_experts
         self.top_k = top_k
 
-        super().__init__(hidden_size, num_experts, bias=False)
+        super().__init__(hidden_size, num_experts, bias=False, std=std)
 
     def forward(self, hidden_states):
         # compute the top_k routing decision
@@ -39,15 +39,19 @@ class TopKGating(ParameterizedLinear):
         return index_sorted_experts, batch_index, batch_gates, expert_size, logits
 
 
-class Experts(nn.Module):
-    def __init__(self, num_experts: int, input_size: int, output_size: int) -> None:
+class ParameterizedExperts(nn.Module):
+    def __init__(self, num_experts: int, input_size: int, output_size: int, std: float | None = None) -> None:
         super().__init__()
+
         self.weight = nn.Parameter(torch.empty(num_experts, output_size, input_size))
-        with torch.no_grad():
-            self.weight.normal_()
+
+        self.std = std
+
         self.num_experts = num_experts
         self.input_size = input_size
         self.output_size = output_size
+
+        self.reset_parameters()
 
     def forward(self, input: torch.Tensor, expert_size: int) -> torch.Tensor:
         input = input.split(expert_size, dim=0)
@@ -59,6 +63,9 @@ class Experts(nn.Module):
         return "num_experts={}, in_features={}, out_features={}".format(
             self.num_experts, self.input_size, self.output_size
         )
+
+    def reset_parameters(self) -> None:
+        ParameterizedLinear.reset_parameters(self)
 
 
 class SparseMoE(nn.Module):
@@ -82,17 +89,24 @@ class SparseMoE(nn.Module):
             hidden_size=self.hidden_size,
             num_experts=config.num_experts,
             top_k=config.num_experts_per_tok,
+            std=config.initializer_range,
         )
 
-        self.c_fc = Experts(
+        self.c_fc = ParameterizedExperts(
             config.num_experts,
             self.hidden_size,
             2 * self.intermediate_size if is_glu(activation_function) else self.intermediate_size,
+            std=config.initializer_range,
         )
 
         self.act = get_activation_function(activation_function)
 
-        self.c_proj = Experts(config.num_experts, self.intermediate_size, self.hidden_size)
+        self.c_proj = ParameterizedExperts(
+            config.num_experts,
+            self.intermediate_size,
+            self.hidden_size,
+            std=config.initializer_range,
+        )
 
     def forward(self, hidden_states: torch.Tensor) -> torch.Tensor:
         if not self.use_padding_free_transformer:
