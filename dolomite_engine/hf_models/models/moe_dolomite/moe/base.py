@@ -6,7 +6,7 @@ from ....modeling_utils import ParameterizedLinear, get_activation_function, is_
 from ..config import MoEDolomiteConfig
 
 
-class GraniteMoeTopKGating(ParameterizedLinear):
+class TopKGating(ParameterizedLinear):
     def __init__(self, hidden_size: int, num_experts: int, top_k: int) -> None:
         self.num_experts = num_experts
         self.top_k = top_k
@@ -39,7 +39,7 @@ class GraniteMoeTopKGating(ParameterizedLinear):
         return index_sorted_experts, batch_index, batch_gates, expert_size, logits
 
 
-class GraniteMoeParallelExperts(nn.Module):
+class Experts(nn.Module):
     def __init__(self, num_experts: int, input_size: int, output_size: int) -> None:
         super().__init__()
         self.weight = nn.Parameter(torch.empty(num_experts, output_size, input_size))
@@ -49,13 +49,11 @@ class GraniteMoeParallelExperts(nn.Module):
         self.input_size = input_size
         self.output_size = output_size
 
-    def forward(self, inputs, expert_size):
-        input_list = inputs.split(expert_size, dim=0)
-        output_list = []
-        for i in range(self.num_experts):
-            output_list.append(F.linear(input_list[i], self.weight[i]))
-        results = torch.cat(output_list, dim=0)
-        return results
+    def forward(self, input: torch.Tensor, expert_size: int) -> torch.Tensor:
+        input = input.split(expert_size, dim=0)
+        input = [F.linear(input[i], self.weight[i]) for i in range(self.num_experts)]
+        input = torch.cat(input, dim=0)
+        return input
 
     def extra_repr(self):
         return "num_experts={}, in_features={}, out_features={}".format(
@@ -69,34 +67,32 @@ class SparseMoE(nn.Module):
     ) -> None:
         super().__init__()
 
-        self.hidden_size = config.hidden_size
-
         self.num_experts = config.num_experts
         self.top_k = config.num_experts_per_tok
         self.normalize_expert_weights = config.normalize_expert_weights
-        self.activation_function = config.activation_function
         self.use_padding_free_transformer = use_padding_free_transformer
         self.layer_idx = layer_idx
 
         self.hidden_size = config.hidden_size
         self.intermediate_size = config.n_inner
 
-        self.activation = get_activation_function(config.activation_function)
-        if config.add_bias:
-            self.bias = torch.nn.Parameter(torch.empty(self.hidden_size))
+        activation_function = config.activation_function
 
-        self.c_fc = GraniteMoeParallelExperts(
-            config.num_experts,
-            self.hidden_size,
-            2 * self.intermediate_size if is_glu(config.activation_function) else self.intermediate_size,
-        )
-        self.c_proj = GraniteMoeParallelExperts(config.num_experts, self.intermediate_size, self.hidden_size)
-
-        self.gate = GraniteMoeTopKGating(
+        self.gate = TopKGating(
             hidden_size=self.hidden_size,
             num_experts=config.num_experts,
             top_k=config.num_experts_per_tok,
         )
+
+        self.c_fc = Experts(
+            config.num_experts,
+            self.hidden_size,
+            2 * self.intermediate_size if is_glu(activation_function) else self.intermediate_size,
+        )
+
+        self.act = get_activation_function(activation_function)
+
+        self.c_proj = Experts(config.num_experts, self.intermediate_size, self.hidden_size)
 
     def forward(self, hidden_states: torch.Tensor) -> torch.Tensor:
         if not self.use_padding_free_transformer:
@@ -109,7 +105,7 @@ class SparseMoE(nn.Module):
         expert_inputs = hidden_states[batch_index]
 
         hidden_states = self.c_fc(expert_inputs, expert_size)
-        hidden_states = self.activation(hidden_states)
+        hidden_states = self.act(hidden_states)
         hidden_states = self.c_proj(hidden_states, expert_size)
 
         hidden_states = hidden_states * batch_gates.unsqueeze(-1)  # [:, None]
