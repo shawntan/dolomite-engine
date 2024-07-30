@@ -71,6 +71,7 @@ class SparseMoE(nn.Module):
         m_width = config.m_width
         n_layer = config.n_layer
         init_method = InitMethod(config.init_method)
+        residual_dropout = config.resid_pdrop
 
         self.gate = ParameterizedLinear(
             in_features=self.hidden_size,
@@ -103,28 +104,21 @@ class SparseMoE(nn.Module):
             std=std,
         )
 
+        self.dropout = nn.Identity() if residual_dropout == 0 else nn.Dropout(residual_dropout)
+
     def forward(self, hidden_states: torch.Tensor) -> torch.Tensor:
         if not self.use_padding_free_transformer:
             batch_size, sequence_length, _ = hidden_states.shape
 
         hidden_states = hidden_states.view(-1, self.hidden_size)
-        total_q = hidden_states.size(0)
 
         router_logits, router_weights, selected_experts = self._compute_routing_weights(hidden_states)
-        batch_index, batch_gates, num_experts_per_token = self._something(router_weights, selected_experts)
-        # batch_index, batch_gates, expert_size, router_logits = self.gate(hidden_states)
-        expert_inputs = hidden_states[batch_index]
-
-        hidden_states = self.c_fc(expert_inputs, num_experts_per_token)
-        hidden_states = self.act(hidden_states)
-        hidden_states = self.c_proj(hidden_states, num_experts_per_token)
-
-        hidden_states = hidden_states * batch_gates.unsqueeze(-1)  # [:, None]
-        zeros = torch.zeros((total_q, self.hidden_size), dtype=hidden_states.dtype, device=hidden_states.device)
-        hidden_states = zeros.index_add(0, batch_index, hidden_states)
+        hidden_states = self._compute_experts(hidden_states, router_weights, selected_experts)
 
         if not self.use_padding_free_transformer:
             hidden_states = hidden_states.reshape(batch_size, sequence_length, self.hidden_size)
+
+        hidden_states = self.dropout(hidden_states)
 
         return hidden_states, router_logits
 
@@ -148,7 +142,30 @@ class SparseMoE(nn.Module):
 
         return router_logits, router_weights, selected_experts
 
-    def _something(self, router_weights: torch.Tensor, selected_experts: torch.Tensor) -> tuple[torch.Tensor]:
+    def _compute_experts(
+        self, hidden_states: torch.Tensor, router_weights: torch.Tensor, selected_experts: torch.Tensor
+    ) -> torch.Tensor:
+        total_q = hidden_states.shape[0]
+
+        batch_index, batch_gates, num_experts_per_token = self._compute_expert_assignment(
+            router_weights, selected_experts
+        )
+        # batch_index, batch_gates, expert_size, router_logits = self.gate(hidden_states)
+        expert_inputs = hidden_states[batch_index]
+
+        hidden_states = self.c_fc(expert_inputs, num_experts_per_token)
+        hidden_states = self.act(hidden_states)
+        hidden_states = self.c_proj(hidden_states, num_experts_per_token)
+
+        hidden_states = hidden_states * batch_gates.unsqueeze(-1)  # [:, None]
+        zeros = torch.zeros((total_q, self.hidden_size), dtype=hidden_states.dtype, device=hidden_states.device)
+        hidden_states = zeros.index_add(0, batch_index, hidden_states)
+
+        return hidden_states
+
+    def _compute_expert_assignment(
+        self, router_weights: torch.Tensor, selected_experts: torch.Tensor
+    ) -> tuple[torch.Tensor]:
         selected_experts = selected_experts.flatten()
 
         num_experts_per_token = selected_experts.bincount(minlength=self.num_experts)
