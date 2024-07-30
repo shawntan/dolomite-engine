@@ -2,23 +2,20 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from ....modeling_utils import get_activation_function, is_glu
+from ....modeling_utils import ParameterizedLinear, get_activation_function, is_glu
 from ..config import MoEDolomiteConfig
 
 
-class GraniteMoeTopKGating(nn.Module):
-    def __init__(self, input_size: int, num_experts: int, top_k: int):
-        super().__init__()
-
+class GraniteMoeTopKGating(ParameterizedLinear):
+    def __init__(self, hidden_size: int, num_experts: int, top_k: int) -> None:
         self.num_experts = num_experts
-        self.input_size = input_size
         self.top_k = top_k
 
-        self.layer = nn.Linear(input_size, num_experts, bias=False)
+        super().__init__(hidden_size, num_experts, bias=False)
 
     def forward(self, hidden_states):
         # compute the top_k routing decision
-        logits = self.layer(hidden_states).float()  # [batch_size x seq_len, num_experts]
+        logits = super().forward(hidden_states).float()  # [batch_size x seq_len, num_experts]
         top_k_logits, top_k_indices = logits.topk(self.top_k, dim=1)  # [num_tokens, top_k]
         top_k_gates = torch.softmax(top_k_logits, dim=1).type_as(hidden_states)  # [num_tokens, top_k]
 
@@ -96,7 +93,7 @@ class SparseMoE(nn.Module):
         self.c_proj = GraniteMoeParallelExperts(config.num_experts, self.intermediate_size, self.hidden_size)
 
         self.gate = GraniteMoeTopKGating(
-            input_size=self.hidden_size,
+            hidden_size=self.hidden_size,
             num_experts=config.num_experts,
             top_k=config.num_experts_per_tok,
         )
