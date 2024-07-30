@@ -43,16 +43,16 @@ class TopKGating(ParameterizedLinear):
 
 
 class ParameterizedExperts(nn.Module):
-    def __init__(self, num_experts: int, input_size: int, output_size: int, std: float | None = None) -> None:
+    def __init__(self, num_experts: int, in_features: int, out_features: int, std: float) -> None:
         super().__init__()
 
-        self.weight = nn.Parameter(torch.empty(num_experts, output_size, input_size))
+        self.weight = nn.Parameter(torch.empty(num_experts, out_features, in_features))
 
         self.std = std
 
         self.num_experts = num_experts
-        self.input_size = input_size
-        self.output_size = output_size
+        self.in_features = in_features
+        self.out_features = out_features
 
         self.reset_parameters()
 
@@ -64,7 +64,7 @@ class ParameterizedExperts(nn.Module):
 
     def extra_repr(self):
         return "num_experts={}, in_features={}, out_features={}".format(
-            self.num_experts, self.input_size, self.output_size
+            self.num_experts, self.in_features, self.out_features
         )
 
     @torch.no_grad()
@@ -105,9 +105,9 @@ class SparseMoE(nn.Module):
         if init_method == InitMethod.mup:
             std /= math.sqrt(m_width)
         self.c_fc = ParameterizedExperts(
-            config.num_experts,
-            self.hidden_size,
-            2 * self.intermediate_size if is_glu(activation_function) else self.intermediate_size,
+            num_experts=config.num_experts,
+            in_features=self.hidden_size,
+            out_features=2 * self.intermediate_size if is_glu(activation_function) else self.intermediate_size,
             std=std,
         )
 
@@ -117,9 +117,9 @@ class SparseMoE(nn.Module):
         if init_method == InitMethod.mup:
             std /= math.sqrt(m_width)
         self.c_proj = ParameterizedExperts(
-            config.num_experts,
-            self.intermediate_size,
-            self.hidden_size,
+            num_experts=config.num_experts,
+            in_features=self.intermediate_size,
+            out_features=self.hidden_size,
             std=std,
         )
 
