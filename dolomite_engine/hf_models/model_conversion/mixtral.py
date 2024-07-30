@@ -238,9 +238,9 @@ def _export_state_dict_to_huggingface(
 
         c_fc_experts = safetensors_weight_manager.get_tensor(f"transformer.h.{layer_idx}.mlp.c_fc.weight")
         c_proj_experts = safetensors_weight_manager.get_tensor(f"transformer.h.{layer_idx}.mlp.c_proj.weight")
-
         for expert_idx in range(num_experts):
             up_weight, gate_weight = split_up_gate_tensor_for_mlp(c_fc_experts[expert_idx])
+
             state_dict[f"model.layers.{layer_idx}.block_sparse_moe.experts.{expert_idx}.w3.weight"] = up_weight
             state_dict[f"model.layers.{layer_idx}.block_sparse_moe.experts.{expert_idx}.w1.weight"] = gate_weight
             state_dict[f"model.layers.{layer_idx}.block_sparse_moe.experts.{expert_idx}.w2.weight"] = c_proj_experts[
