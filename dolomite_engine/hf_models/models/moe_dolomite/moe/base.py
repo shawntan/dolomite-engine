@@ -2,24 +2,12 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from ....modeling_utils import ParameterizedLinear, get_activation_function, is_glu
-from ...gpt_dolomite.mlp import MLP
+from ....modeling_utils import get_activation_function, is_glu
 from ..config import MoEDolomiteConfig
 
 
-# Copied from transformers.models.jetmoe.modeling_jetmoe.JetMoeTopKGating with JetMoe->GraniteMoe
 class GraniteMoeTopKGating(nn.Module):
     def __init__(self, input_size: int, num_experts: int, top_k: int):
-        """
-        Initialize the top-k gating mechanism.
-        Args:
-            input_size (`int`):
-                Size of the input.
-            num_experts (`int`):
-                Number of experts.
-            top_k (`int`):
-                Number of top experts to select.
-        """
         super().__init__()
 
         self.num_experts = num_experts
@@ -56,21 +44,6 @@ class GraniteMoeTopKGating(nn.Module):
 
 class GraniteMoeParallelExperts(nn.Module):
     def __init__(self, num_experts: int, input_size: int, output_size: int) -> None:
-        """
-        Initialize the GraniteMoeParallelExperts module.
-        The experts weights are stored in [num_experts, output_size, input_size] format. Such that it's comptible with
-        many MoE libraries, such as [Megablock](https://github.com/databricks/megablocks) and
-        [ScatterMoE](https://github.com/shawntan/scattermoe), as well as the
-        [MoE kernel](https://github.com/vllm-project/vllm/blob/main/vllm/model_executor/layers/fused_moe/fused_moe.py)
-        used in vllm.
-        Args:
-            num_experts (int):
-                Number of experts.
-            input_size (int):
-                Size of the input.
-            output_size (int):
-                Size of the output.
-        """
         super().__init__()
         self.weight = nn.Parameter(torch.empty(num_experts, output_size, input_size))
         with torch.no_grad():
@@ -80,16 +53,6 @@ class GraniteMoeParallelExperts(nn.Module):
         self.output_size = output_size
 
     def forward(self, inputs, expert_size):
-        """
-        Forward pass of the GraniteMoeParallelExperts module.
-        Args:
-            inputs (Tensor):
-                Input tensor.
-            expert_size:
-                Expert size information.
-        Returns:
-            Tensor: Output tensor.
-        """
         input_list = inputs.split(expert_size, dim=0)
         output_list = []
         for i in range(self.num_experts):
@@ -117,8 +80,6 @@ class SparseMoE(nn.Module):
         self.activation_function = config.activation_function
         self.use_padding_free_transformer = use_padding_free_transformer
         self.layer_idx = layer_idx
-        # self.gate = ParameterizedLinear(self.hidden_size, self.num_experts, bias=False)
-        # self.experts = nn.ModuleList([MLP(config) for _ in range(self.num_experts)])
 
         self.hidden_size = config.hidden_size
         self.intermediate_size = config.n_inner
@@ -147,26 +108,18 @@ class SparseMoE(nn.Module):
         hidden_states = hidden_states.view(-1, self.hidden_size)
         total_q = hidden_states.size(0)
 
-        # router_logits, routing_weights, selected_experts = self._compute_routing_weights(hidden_states)
-        # hidden_states = self._compute_expert_outputs(hidden_states, routing_weights, selected_experts)
-
         _, batch_index, batch_gates, expert_size, router_logits = self.gate(hidden_states)
         expert_inputs = hidden_states[batch_index]
 
         hidden_states = self.c_fc(expert_inputs, expert_size)
-        # chunked_hidden_states = hidden_states.chunk(2, dim=-1)
-        # hidden_states = self.activation(chunked_hidden_states[0]) * chunked_hidden_states[1]
         hidden_states = self.activation(hidden_states)
-        expert_outputs = self.c_proj(hidden_states, expert_size)
+        hidden_states = self.c_proj(hidden_states, expert_size)
 
-        expert_outputs = expert_outputs * batch_gates.unsqueeze(-1)  # [:, None]
-        zeros = torch.zeros((total_q, self.hidden_size), dtype=expert_outputs.dtype, device=expert_outputs.device)
-        hidden_states = zeros.index_add(0, batch_index, expert_outputs)
-        if hasattr(self, "bias"):
-            hidden_states = hidden_states + self.bias
+        hidden_states = hidden_states * batch_gates.unsqueeze(-1)  # [:, None]
+        zeros = torch.zeros((total_q, self.hidden_size), dtype=hidden_states.dtype, device=hidden_states.device)
+        hidden_states = zeros.index_add(0, batch_index, hidden_states)
 
         if not self.use_padding_free_transformer:
             hidden_states = hidden_states.reshape(batch_size, sequence_length, self.hidden_size)
-            # hidden_states = hidden_states.reshape(batch_size, sequence_length, self.hidden_size)
 
         return hidden_states, router_logits

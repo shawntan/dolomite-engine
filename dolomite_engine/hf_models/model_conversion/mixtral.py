@@ -126,7 +126,6 @@ def _import_state_dict_from_huggingface(
             )
         state_dict[f"transformer.h.{layer_idx}.mlp.c_fc.weight"] = torch.stack(c_fc_weights)
         state_dict[f"transformer.h.{layer_idx}.mlp.c_proj.weight"] = torch.stack(c_proj_weights)
-        print("Success append weights.", state_dict[f"transformer.h.{layer_idx}.mlp.c_fc.weight"].size())
 
         state_dict[f"transformer.h.{layer_idx}.attn.c_attn.weight"] = interleave_query_key_value_tensor_for_attention(
             safetensors_weight_manager.get_slice(f"model.layers.{layer_idx}.self_attn.q_proj.weight"),
