@@ -10,10 +10,16 @@ from ..config import MoEDolomiteConfig
 
 
 class ParameterizedExperts(nn.Module):
-    def __init__(self, num_experts: int, in_features: int, out_features: int, std: float) -> None:
+    def __init__(
+        self, num_experts: int, in_features: int, out_features: int, add_bias: bool = True, std: float | None = None
+    ) -> None:
         super().__init__()
 
         self.weight = nn.Parameter(torch.empty(num_experts, out_features, in_features))
+
+        self.bias = None
+        if add_bias:
+            self.bias = nn.Parameter(torch.empty(num_experts, out_features))
 
         self.std = std
 
@@ -25,7 +31,10 @@ class ParameterizedExperts(nn.Module):
 
     def forward(self, input: torch.Tensor, num_experts_per_token: torch.Tensor) -> torch.Tensor:
         input = input.split(num_experts_per_token.tolist(), dim=0)
-        input = [F.linear(input[i], self.weight[i]) for i in range(self.num_experts)]
+        input = [
+            F.linear(input[i], self.weight[i], None if self.bias is None else self.bias[i])
+            for i in range(self.num_experts)
+        ]
         input = torch.cat(input, dim=0)
         return input
 
@@ -37,6 +46,8 @@ class ParameterizedExperts(nn.Module):
     @torch.no_grad()
     def reset_parameters(self) -> None:
         nn.init.normal_(self.weight, mean=0, std=self.std)
+        if hasattr(self, "bias") and self.bias is not None:
+            self.bias.zero_()
 
 
 class SparseMoE(nn.Module):
@@ -75,6 +86,7 @@ class SparseMoE(nn.Module):
             num_experts=config.num_experts,
             in_features=self.hidden_size,
             out_features=2 * self.intermediate_size if is_glu(activation_function) else self.intermediate_size,
+            add_bias=config.add_bias,
             std=std,
         )
 
@@ -87,6 +99,7 @@ class SparseMoE(nn.Module):
             num_experts=config.num_experts,
             in_features=self.intermediate_size,
             out_features=self.hidden_size,
+            add_bias=config.add_bias,
             std=std,
         )
 
