@@ -9,39 +9,6 @@ from ....modeling_utils import ParameterizedLinear, get_activation_function, is_
 from ..config import MoEDolomiteConfig
 
 
-class TopKGating(ParameterizedLinear):
-    def __init__(self, hidden_size: int, num_experts: int, top_k: int, std: float | None = None) -> None:
-        self.num_experts = num_experts
-        self.top_k = top_k
-
-        super().__init__(hidden_size, num_experts, bias=False, std=std)
-
-    def forward(self, hidden_states):
-        # compute the top_k routing decision
-        logits = super().forward(hidden_states).float()  # [batch_size x seq_len, num_experts]
-        top_k_logits, top_k_indices = logits.topk(self.top_k, dim=1)  # [num_tokens, top_k]
-        top_k_gates = torch.softmax(top_k_logits, dim=1).type_as(hidden_states)  # [num_tokens, top_k]
-
-        # compute number of input given to each expert
-        zeros = torch.zeros(
-            [top_k_gates.size(0), self.num_experts], dtype=top_k_gates.dtype, device=top_k_gates.device
-        )  # [num_tokens, num_experts]
-        gates = zeros.scatter(1, top_k_indices, 1)  # [num_tokens, num_experts]
-        expert_size = gates.long().sum(0)  # [num_experts,]
-        expert_size = expert_size.tolist()
-
-        # sort and group input tokens according to expert assignment
-        top_k_experts = top_k_indices.flatten()  # [num_tokens * top_k]
-        _, index_sorted_experts = top_k_experts.sort(0)  # [num_tokens * top_k]
-        batch_index = index_sorted_experts.div(self.top_k, rounding_mode="trunc")  # [num_tokens * top_k]
-
-        # gather the gate values for grouped input tokens
-        top_k_gates = top_k_gates.flatten()  # [num_tokens * top_k]
-        batch_gates = top_k_gates[index_sorted_experts]  # [num_tokens * top_k]
-
-        return index_sorted_experts, batch_index, batch_gates, expert_size, logits
-
-
 class ParameterizedExperts(nn.Module):
     def __init__(self, num_experts: int, in_features: int, out_features: int, std: float) -> None:
         super().__init__()
@@ -94,10 +61,10 @@ class SparseMoE(nn.Module):
         n_layer = config.n_layer
         init_method = InitMethod(config.init_method)
 
-        self.gate = TopKGating(
-            hidden_size=self.hidden_size,
-            num_experts=config.num_experts,
-            top_k=config.num_experts_per_tok,
+        self.gate = ParameterizedLinear(
+            in_features=self.hidden_size,
+            out_features=config.num_experts,
+            bias=False,
             std=config.initializer_range,
         )
 
@@ -130,7 +97,9 @@ class SparseMoE(nn.Module):
         hidden_states = hidden_states.view(-1, self.hidden_size)
         total_q = hidden_states.size(0)
 
-        _, batch_index, batch_gates, expert_size, router_logits = self.gate(hidden_states)
+        router_logits, router_weights, selected_experts = self._compute_routing_weights(hidden_states)
+        batch_index, batch_gates, expert_size = self._something(router_weights, selected_experts)
+        # batch_index, batch_gates, expert_size, router_logits = self.gate(hidden_states)
         expert_inputs = hidden_states[batch_index]
 
         hidden_states = self.c_fc(expert_inputs, expert_size)
@@ -145,3 +114,43 @@ class SparseMoE(nn.Module):
             hidden_states = hidden_states.reshape(batch_size, sequence_length, self.hidden_size)
 
         return hidden_states, router_logits
+
+    def _compute_routing_weights(self, hidden_states: torch.Tensor) -> tuple[torch.Tensor]:
+        # hidden_states -> (total_q, hidden_size)
+        router_logits = self.gate(hidden_states)
+        # router_logits -> (total_q, num_experts)
+
+        router_weights = F.softmax(router_logits.float(), dim=-1)
+
+        if self.top_k == 1:
+            router_weights, selected_experts = router_weights.max(dim=-1, keepdim=True)
+        else:
+            router_weights, selected_experts = router_weights.topk(self.top_k, dim=-1)
+
+        if self.normalize_expert_weights:
+            router_weights = router_weights / router_weights.sum(dim=-1, keepdim=True)
+
+        # we cast back to the input dtype
+        router_weights = router_weights.type_as(hidden_states)
+
+        return router_logits, router_weights, selected_experts
+
+    def _something(self, router_weights: torch.Tensor, selected_experts: torch.Tensor) -> tuple[torch.Tensor]:
+        # compute number of input given to each expert
+        zeros = torch.zeros(
+            [router_weights.size(0), self.num_experts], dtype=router_weights.dtype, device=router_weights.device
+        )  # [num_tokens, num_experts]
+        gates = zeros.scatter(1, selected_experts, 1)  # [num_tokens, num_experts]
+        expert_size = gates.long().sum(0)  # [num_experts,]
+        expert_size = expert_size.tolist()
+
+        # sort and group input tokens according to expert assignment
+        top_k_experts = selected_experts.flatten()  # [num_tokens * top_k]
+        _, index_sorted_experts = top_k_experts.sort(0)  # [num_tokens * top_k]
+        batch_index = index_sorted_experts.div(self.top_k, rounding_mode="trunc")  # [num_tokens * top_k]
+
+        # gather the gate values for grouped input tokens
+        router_weights = router_weights.flatten()  # [num_tokens * top_k]
+        batch_gates = router_weights[index_sorted_experts]  # [num_tokens * top_k]
+
+        return batch_index, batch_gates, expert_size
