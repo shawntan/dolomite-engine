@@ -23,8 +23,8 @@ class ParameterizedExperts(nn.Module):
 
         self.reset_parameters()
 
-    def forward(self, input: torch.Tensor, expert_size: int) -> torch.Tensor:
-        input = input.split(expert_size, dim=0)
+    def forward(self, input: torch.Tensor, num_experts_per_token: torch.Tensor) -> torch.Tensor:
+        input = input.split(num_experts_per_token.tolist(), dim=0)
         input = [F.linear(input[i], self.weight[i]) for i in range(self.num_experts)]
         input = torch.cat(input, dim=0)
         return input
@@ -98,13 +98,13 @@ class SparseMoE(nn.Module):
         total_q = hidden_states.size(0)
 
         router_logits, router_weights, selected_experts = self._compute_routing_weights(hidden_states)
-        batch_index, batch_gates, expert_size = self._something(router_weights, selected_experts)
+        batch_index, batch_gates, num_experts_per_token = self._something(router_weights, selected_experts)
         # batch_index, batch_gates, expert_size, router_logits = self.gate(hidden_states)
         expert_inputs = hidden_states[batch_index]
 
-        hidden_states = self.c_fc(expert_inputs, expert_size)
+        hidden_states = self.c_fc(expert_inputs, num_experts_per_token)
         hidden_states = self.act(hidden_states)
-        hidden_states = self.c_proj(hidden_states, expert_size)
+        hidden_states = self.c_proj(hidden_states, num_experts_per_token)
 
         hidden_states = hidden_states * batch_gates.unsqueeze(-1)  # [:, None]
         zeros = torch.zeros((total_q, self.hidden_size), dtype=hidden_states.dtype, device=hidden_states.device)
@@ -136,21 +136,16 @@ class SparseMoE(nn.Module):
         return router_logits, router_weights, selected_experts
 
     def _something(self, router_weights: torch.Tensor, selected_experts: torch.Tensor) -> tuple[torch.Tensor]:
-        # compute number of input given to each expert
-        zeros = torch.zeros(
-            [router_weights.size(0), self.num_experts], dtype=router_weights.dtype, device=router_weights.device
-        )  # [num_tokens, num_experts]
-        gates = zeros.scatter(1, selected_experts, 1)  # [num_tokens, num_experts]
-        expert_size = gates.long().sum(0)  # [num_experts,]
-        expert_size = expert_size.tolist()
+        selected_experts = selected_experts.flatten()
+
+        num_experts_per_token = selected_experts.bincount(minlength=self.num_experts)
 
         # sort and group input tokens according to expert assignment
-        top_k_experts = selected_experts.flatten()  # [num_tokens * top_k]
-        _, index_sorted_experts = top_k_experts.sort(0)  # [num_tokens * top_k]
-        batch_index = index_sorted_experts.div(self.top_k, rounding_mode="trunc")  # [num_tokens * top_k]
+        _, index_sorted_experts = selected_experts.sort(0)  # [num_tokens * top_k]
+        batch_index = index_sorted_experts // self.top_k  # [num_tokens * top_k]
 
         # gather the gate values for grouped input tokens
         router_weights = router_weights.flatten()  # [num_tokens * top_k]
         batch_gates = router_weights[index_sorted_experts]  # [num_tokens * top_k]
 
-        return batch_index, batch_gates, expert_size
+        return batch_index, batch_gates, num_experts_per_token
