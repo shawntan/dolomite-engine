@@ -1,7 +1,10 @@
+import math
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
+from ....enums import InitMethod
 from ....modeling_utils import ParameterizedLinear, get_activation_function, is_glu
 from ..config import MoEDolomiteConfig
 
@@ -64,8 +67,9 @@ class ParameterizedExperts(nn.Module):
             self.num_experts, self.input_size, self.output_size
         )
 
+    @torch.no_grad()
     def reset_parameters(self) -> None:
-        ParameterizedLinear.reset_parameters(self)
+        nn.init.normal_(self.weight, mean=0, std=self.std)
 
 
 class SparseMoE(nn.Module):
@@ -85,6 +89,11 @@ class SparseMoE(nn.Module):
 
         activation_function = config.activation_function
 
+        initializer_range = config.initializer_range
+        m_width = config.m_width
+        n_layer = config.n_layer
+        init_method = InitMethod(config.init_method)
+
         self.gate = TopKGating(
             hidden_size=self.hidden_size,
             num_experts=config.num_experts,
@@ -92,20 +101,26 @@ class SparseMoE(nn.Module):
             std=config.initializer_range,
         )
 
+        std = initializer_range
+        if init_method == InitMethod.mup:
+            std /= math.sqrt(m_width)
         self.c_fc = ParameterizedExperts(
             config.num_experts,
             self.hidden_size,
             2 * self.intermediate_size if is_glu(activation_function) else self.intermediate_size,
-            std=config.initializer_range,
+            std=std,
         )
 
         self.act = get_activation_function(activation_function)
 
+        std = initializer_range / math.sqrt(2 * n_layer)
+        if init_method == InitMethod.mup:
+            std /= math.sqrt(m_width)
         self.c_proj = ParameterizedExperts(
             config.num_experts,
             self.intermediate_size,
             self.hidden_size,
-            std=config.initializer_range,
+            std=std,
         )
 
     def forward(self, hidden_states: torch.Tensor) -> torch.Tensor:
