@@ -159,35 +159,36 @@ def compute_block(
 
 
 def sb_fwd(q, k, v, cu_seqlens, batch_ids, cu_row_blocks, logit_scale=None):
-    num_heads = q.size(0)
-    batch_size = cu_seqlens.size(0)
-    token_size = q.size(1)
-    dim_size = q.size(-1)
-    BLOCK_D = triton.next_power_of_2(dim_size)
-    if logit_scale is None:
-        logit_scale = 1 / math.sqrt(dim_size)
-    o = torch.zeros_like(q)
-    rem = torch.zeros_like(q[:, :, 0])
-    M = torch.zeros((num_heads, cu_row_blocks[-1], BLOCK_M), device=q.device, dtype=q.dtype)
-    M_count = triton.cdiv(token_size, BLOCK_M)
-    # N_count = triton.cdiv(token_size, BLOCK_N)
-    grid = (num_heads, M_count)
-    # att = torch.zeros((token_size, token_size), device=out.device, dtype=torch.int32)
-    # att_p = torch.zeros((token_size, token_size), device=batch_ids.device, dtype=q.dtype)
-    _forward[grid](
-        q, q.stride(0), q.stride(1), q.stride(2),
-        k, k.stride(0), k.stride(1), k.stride(2),
-        v, v.stride(0), v.stride(1), v.stride(2),
-        o, o.stride(0), o.stride(1), o.stride(2),
-        M, M.stride(0), M.stride(1), M.stride(2), cu_row_blocks,
-        rem, rem.stride(0), rem.stride(1),
-        batch_ids, cu_seqlens,
-        # att_p, att_p.stride(0), att_p.stride(1),
-        logit_scale=logit_scale,
-        batch_size=batch_size, token_size=token_size,
-        BLOCK_M=BLOCK_M, BLOCK_N=BLOCK_N, BLOCK_D=BLOCK_D
-    )
-    return o, rem, M
+    with torch.device(torch.cuda.current_device()):
+        num_heads = q.size(0)
+        batch_size = cu_seqlens.size(0)
+        token_size = q.size(1)
+        dim_size = q.size(-1)
+        BLOCK_D = triton.next_power_of_2(dim_size)
+        if logit_scale is None:
+            logit_scale = 1 / math.sqrt(dim_size)
+        o = torch.zeros_like(q)
+        rem = torch.zeros_like(q[:, :, 0])
+        M = torch.zeros((num_heads, cu_row_blocks[-1], BLOCK_M), device=q.device, dtype=q.dtype)
+        M_count = triton.cdiv(token_size, BLOCK_M)
+        # N_count = triton.cdiv(token_size, BLOCK_N)
+        grid = (num_heads, M_count)
+        # att = torch.zeros((token_size, token_size), device=out.device, dtype=torch.int32)
+        # att_p = torch.zeros((token_size, token_size), device=batch_ids.device, dtype=q.dtype)
+        _forward[grid](
+            q, q.stride(0), q.stride(1), q.stride(2),
+            k, k.stride(0), k.stride(1), k.stride(2),
+            v, v.stride(0), v.stride(1), v.stride(2),
+            o, o.stride(0), o.stride(1), o.stride(2),
+            M, M.stride(0), M.stride(1), M.stride(2), cu_row_blocks,
+            rem, rem.stride(0), rem.stride(1),
+            batch_ids, cu_seqlens,
+            # att_p, att_p.stride(0), att_p.stride(1),
+            logit_scale=logit_scale,
+            batch_size=batch_size, token_size=token_size,
+            BLOCK_M=BLOCK_M, BLOCK_N=BLOCK_N, BLOCK_D=BLOCK_D
+        )
+        return o, rem, M
 
 
 @triton.jit
@@ -400,72 +401,73 @@ def _backward_dkdv(
     tl.store(DV_blk_ptrs, dv.to(DV_ptr.type.element_ty), mask=N_mask[:, None])
     # tl.store(R_blk_ptrs, neg_log_acc)
 def sb_bwd(do, dr, q, k, v, cu_seqlens, M, sequence_ids, cu_row_blocks, first_row_block, logit_scale=None):
-    batch_size = cu_seqlens.size(0)
-    num_heads = q.size(0)
-    token_size = q.size(1)
-    dim_size = q.size(-1)
-    if logit_scale is None:
-        logit_scale = 1 / math.sqrt(dim_size)
-    BLOCK_D = triton.next_power_of_2(dim_size)
-    # BLOCK_BATCH = triton.next_power_of_2(batch_size)
-    M_count = triton.cdiv(token_size, BLOCK_M)
-    N_count = triton.cdiv(token_size, BLOCK_N)
+    with torch.device(q.device):
+        batch_size = cu_seqlens.size(0)
+        num_heads = q.size(0)
+        token_size = q.size(1)
+        dim_size = q.size(-1)
+        if logit_scale is None:
+            logit_scale = 1 / math.sqrt(dim_size)
+        BLOCK_D = triton.next_power_of_2(dim_size)
+        # BLOCK_BATCH = triton.next_power_of_2(batch_size)
+        M_count = triton.cdiv(token_size, BLOCK_M)
+        N_count = triton.cdiv(token_size, BLOCK_N)
 
-    dq = torch.zeros_like(q)
-    dk = torch.zeros_like(k)
-    dv = torch.zeros_like(v)
-    DM = torch.zeros_like(M)
-    # print(DM.numel())
-    # att = torch.zeros((token_size, token_size), device=out.device, dtype=torch.int32)
-    # att_dq = torch.zeros((token_size, token_size), device=q.device, dtype=q.dtype)
-    _backward_dq[num_heads, M_count](
-        # DO_ptr, stride_dom, stride_dod,
-        do, do.stride(0), do.stride(1), do.stride(2),
-        # DR_ptr, stride_drm,
-        dr, dr.stride(0), dr.stride(1),
-        # Q_ptr, stride_qm, stride_qd,
-        q, q.stride(0), q.stride(1), q.stride(2),
-        # K_ptr, stride_kn, stride_kd,
-        k, k.stride(0), k.stride(1), k.stride(2),
-        # V_ptr, stride_vn, stride_vd,
-        v, v.stride(0), v.stride(1), v.stride(2),
-        # DQ_ptr, stride_dqm, stride_dqd,
-        dq, dq.stride(0), dq.stride(1), dq.stride(2),
-        # M_ptr, stride_mi, stride_mm, CRB_ptr,
-        M, M.stride(0), M.stride(1), M.stride(2), DM, cu_row_blocks,
-        # batch_ptr, CSL_ptr,
-        sequence_ids, cu_seqlens,
-        # L_ptr, stride_lm, stride_ln,
-        # att_dq, att_dq.stride(0), att_dq.stride(1),
-        # logit_scale, batch_size, token_size,
-        logit_scale=logit_scale, batch_size=batch_size, token_size=token_size,
-        # BLOCK_M: tl.constexpr, BLOCK_N: tl.constexpr, BLOCK_D: tl.constexpr
-        BLOCK_M=BLOCK_M, BLOCK_N=BLOCK_N, BLOCK_D=BLOCK_D
-    )
-    # M_idxs = torch.zeros((M_count, N_count), dtype=torch.int32, device=do.device) - 1
-    _backward_dkdv[num_heads, N_count](
-        do, do.stride(0), do.stride(1), do.stride(2),
-        dr, dr.stride(0), dr.stride(1),
-        q, q.stride(0), q.stride(1), q.stride(2),
-        k, k.stride(0), k.stride(1), k.stride(2),
-        v, v.stride(0), v.stride(1), v.stride(2),
-        M, M.stride(0), M.stride(1), M.stride(2), DM, cu_row_blocks, first_row_block,
-        dk, dk.stride(0), dk.stride(1), dk.stride(2),
-        dv, dv.stride(0), dv.stride(1), dv.stride(2),
-        sequence_ids, cu_seqlens,
-        # M_idxs, M_idxs.stride(0), M_idxs.stride(1),
-        # att_dkdv, att_dkdv.stride(0), att_dkdv.stride(1),
-        logit_scale=logit_scale,
-        batch_size=batch_size, token_size=token_size,
-        BLOCK_M=BLOCK_M, BLOCK_N=BLOCK_N, BLOCK_D=BLOCK_D
-    )
-    # print(M_idxs)
-    # print(M.size())
-    # unique_idxs = torch.sort(M_idxs[M_idxs != -1])[0]
-    # correct_idxs = torch.arange(M.size(1), dtype=torch.int32, device=do.device)
-    # assert all(unique_idxs == correct_idxs)
-    # assert M.size(1) - 1 == M_idxs[-1, -1], (M.size(1), M_idxs[-1, -1])
-    return dq, dk, dv
+        dq = torch.zeros_like(q)
+        dk = torch.zeros_like(k)
+        dv = torch.zeros_like(v)
+        DM = torch.zeros_like(M)
+        # print(DM.numel())
+        # att = torch.zeros((token_size, token_size), device=out.device, dtype=torch.int32)
+        # att_dq = torch.zeros((token_size, token_size), device=q.device, dtype=q.dtype)
+        _backward_dq[num_heads, M_count](
+            # DO_ptr, stride_dom, stride_dod,
+            do, do.stride(0), do.stride(1), do.stride(2),
+            # DR_ptr, stride_drm,
+            dr, dr.stride(0), dr.stride(1),
+            # Q_ptr, stride_qm, stride_qd,
+            q, q.stride(0), q.stride(1), q.stride(2),
+            # K_ptr, stride_kn, stride_kd,
+            k, k.stride(0), k.stride(1), k.stride(2),
+            # V_ptr, stride_vn, stride_vd,
+            v, v.stride(0), v.stride(1), v.stride(2),
+            # DQ_ptr, stride_dqm, stride_dqd,
+            dq, dq.stride(0), dq.stride(1), dq.stride(2),
+            # M_ptr, stride_mi, stride_mm, CRB_ptr,
+            M, M.stride(0), M.stride(1), M.stride(2), DM, cu_row_blocks,
+            # batch_ptr, CSL_ptr,
+            sequence_ids, cu_seqlens,
+            # L_ptr, stride_lm, stride_ln,
+            # att_dq, att_dq.stride(0), att_dq.stride(1),
+            # logit_scale, batch_size, token_size,
+            logit_scale=logit_scale, batch_size=batch_size, token_size=token_size,
+            # BLOCK_M: tl.constexpr, BLOCK_N: tl.constexpr, BLOCK_D: tl.constexpr
+            BLOCK_M=BLOCK_M, BLOCK_N=BLOCK_N, BLOCK_D=BLOCK_D
+        )
+        # M_idxs = torch.zeros((M_count, N_count), dtype=torch.int32, device=do.device) - 1
+        _backward_dkdv[num_heads, N_count](
+            do, do.stride(0), do.stride(1), do.stride(2),
+            dr, dr.stride(0), dr.stride(1),
+            q, q.stride(0), q.stride(1), q.stride(2),
+            k, k.stride(0), k.stride(1), k.stride(2),
+            v, v.stride(0), v.stride(1), v.stride(2),
+            M, M.stride(0), M.stride(1), M.stride(2), DM, cu_row_blocks, first_row_block,
+            dk, dk.stride(0), dk.stride(1), dk.stride(2),
+            dv, dv.stride(0), dv.stride(1), dv.stride(2),
+            sequence_ids, cu_seqlens,
+            # M_idxs, M_idxs.stride(0), M_idxs.stride(1),
+            # att_dkdv, att_dkdv.stride(0), att_dkdv.stride(1),
+            logit_scale=logit_scale,
+            batch_size=batch_size, token_size=token_size,
+            BLOCK_M=BLOCK_M, BLOCK_N=BLOCK_N, BLOCK_D=BLOCK_D
+        )
+        # print(M_idxs)
+        # print(M.size())
+        # unique_idxs = torch.sort(M_idxs[M_idxs != -1])[0]
+        # correct_idxs = torch.arange(M.size(1), dtype=torch.int32, device=do.device)
+        # assert all(unique_idxs == correct_idxs)
+        # assert M.size(1) - 1 == M_idxs[-1, -1], (M.size(1), M_idxs[-1, -1])
+        return dq, dk, dv
 
 class StickBreakingAttention(torch.autograd.Function):
     @staticmethod

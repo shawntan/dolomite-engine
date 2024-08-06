@@ -112,8 +112,14 @@ class GPTDolomiteForCausalLM(GPTDolomitePreTrainedModel):
     ) -> Union[Tuple, CausalLMOutputWithPast]:
         return_dict = return_dict if return_dict is not None else self.config.use_return_dict
 
-        if not self.training and input_ids.size(0) == 1:
-            input_ids = [list(x for x in input_ids[0])]
+        # if not self.training and input_ids.size(0) == 1:
+        #     input_ids = input_ids[0]
+        #     input_ids = [list(x for x in input_ids[0])]
+        if len(input_ids.size()) == 1 and cu_seqlens is None:
+            cu_seqlens = torch.tensor([0, input_ids.size(0)], device=input_ids.device, dtype=torch.int32)
+            max_seqlen = input_ids.size(0)
+            # input_ids = input_ids[0]
+            # print(input_ids.size(), cu_seqlens)
 
         input_ids, position_ids, token_type_ids, labels, cu_seqlens, max_seqlen = self.prepare_inputs_for_model(
             input_ids=input_ids,
@@ -139,7 +145,6 @@ class GPTDolomiteForCausalLM(GPTDolomitePreTrainedModel):
         #     attention_mask -> None or (batch_size, key_length)
         #     position_ids -> None or (batch_size, key_length)
         # ==========================================================================================
-
         transformer_outputs = self.transformer(
             input_ids,
             past_key_values=past_key_values,

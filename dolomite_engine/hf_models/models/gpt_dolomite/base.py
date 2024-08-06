@@ -161,9 +161,9 @@ class GPTDolomitePreTrainedModel(PreTrainedModel):
                     cu_seqlens is not None
                 ), "cu_seqlens needs to be specified when using tensor inputs with padding_free transformer"
 
-                assert position_ids is not None, "max_seqlen needs to be specified when specifying cu_seqlens"
-                assert max_seqlen is not None, "max_seqlen needs to be specified when specifying cu_seqlens"
-                assert attention_mask is None, "attention_mask should not be passed when specifying cu_seqlens"
+                # assert position_ids is not None, "max_seqlen needs to be specified when specifying cu_seqlens"
+                # assert max_seqlen is not None, "max_seqlen needs to be specified when specifying cu_seqlens"
+                # assert attention_mask is None, "attention_mask should not be passed when specifying cu_seqlens"
 
             if use_cache or past_key_values is not None:
                 raise NotImplementedError("KV caching is not supported with padding_free transformer")
@@ -492,10 +492,11 @@ class GPTDolomiteModel(GPTDolomitePreTrainedModel):
         device = input_ids.device if input_ids is not None else inputs_embeds.device
 
         if self._use_padding_free_transformer:
-            assert position_ids is not None, (
-                "GPTDolomiteModel needs position_ids from outside when using flash attention with List[List[int]] "
-                "inputs"
-            )
+            pass
+            # assert position_ids is not None, (
+            #     "GPTDolomiteModel needs position_ids from outside when using flash attention with List[List[int]] "
+            #     "inputs"
+            # )
         else:
             if self.position_embedding_type == PositionEmbeddingType.alibi:
                 if position_ids is not None:
@@ -525,8 +526,8 @@ class GPTDolomiteModel(GPTDolomitePreTrainedModel):
             query_length = input_shape[-1]
             key_length = past_length + query_length
 
-        if position_ids is None:
-            position_ids = self._get_position_ids(attention_mask, past_length, query_length, key_length, device)
+        # if position_ids is None:
+        #     position_ids = self._get_position_ids(attention_mask, past_length, query_length, key_length, device)
 
         # ==========================================================================================
         # padding_free:
@@ -556,9 +557,10 @@ class GPTDolomiteModel(GPTDolomitePreTrainedModel):
         # alibi_bias -> (batch_size, num_heads, query_length, key_length)
         # ==========================================================================================
 
-        rope_cos_sin = self._get_rope_cos_sin(
-            key_length, position_ids, dtype=hidden_states.dtype, device=hidden_states.device
-        )
+        # rope_cos_sin = self._get_rope_cos_sin(
+        #     key_length, position_ids, dtype=hidden_states.dtype, device=hidden_states.device
+        # )
+        rope_cos_sin = None
 
         # ==========================================================================================
         # padding_free:
