@@ -62,17 +62,27 @@ class PaddingFreeSBAttention(Attention):
         #     causal=self.causal,
         # )
 
+        # attn_output, rem = sb_flash_attn_varlen(
+        #     q=query.permute(1, 0, 2).contiguous(),
+        #     k=key.permute(1, 0, 2).contiguous(),
+        #     v=v_.contiguous(),
+        #     cu_seqlens=torch.tensor([query.size(0)], dtype=torch.int32, device=query.device),
+        #     inv_temp=softmax_scale,
+        #     zero_start=False,
+        # )
+        # attn_output = attn_output + rem[..., None] * v_
+        # attn_output = attn_output.permute(1, 0, 2).contiguous()
+
         v_ = value.permute(1, 0, 2)
         attn_output, rem = sb_flash_attn_varlen(
-            q=query.permute(1, 0, 2).contiguous(),
-            k=key.permute(1, 0, 2).contiguous(),
-            v=v_.contiguous(),
-            cu_seqlens=torch.tensor([query.size(0)], dtype=torch.int32, device=query.device),
+            q=query.permute(1, 0, 2),
+            k=key.permute(1, 0, 2),
+            v=v_,
+            cu_seqlens=cu_seqlens,
             inv_temp=softmax_scale,
-            zero_start=False,
         )
         attn_output = attn_output + rem[..., None] * v_
-        attn_output = attn_output.permute(1, 0, 2).contiguous()
+        attn_output = attn_output.permute(1, 0, 2)
 
         # ==========================================================================================
         # attn_output -> (total_q, num_heads, head_dim)
