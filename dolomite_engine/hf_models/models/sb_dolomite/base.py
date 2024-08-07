@@ -9,6 +9,7 @@ from ...defaults import DEFAULT_NORMALIZATION_IMPLEMENTATION
 from ...enums import AttentionHeadType, PositionEmbeddingType
 from ...modeling_utils import Alibi, ParameterizedEmbedding, RMSNorm, RoPE, YaRNScaledRoPE, get_normalization_function
 from ...utils import convert_padding_free_lists_to_tensors, divide_if_divisible
+from . import sb_varlen
 from .config import GPTDolomiteConfig
 from .layer import GPTDolomiteBlock
 
@@ -190,6 +191,7 @@ class GPTDolomiteModel(GPTDolomitePreTrainedModel):
             position_ids,
             rope_cos_sin,
             past_key_values,
+            sb_metadata,
         ) = self._prepare_a_bunch_of_stuff(
             input_ids=input_ids,
             past_key_values=past_key_values,
@@ -226,6 +228,7 @@ class GPTDolomiteModel(GPTDolomitePreTrainedModel):
                 rope_cos_sin=rope_cos_sin,
                 cu_seqlens=cu_seqlens,
                 max_seqlen=max_seqlen,
+                sb_metadata=sb_metadata,
             )
 
         hidden_states = self.ln_f(hidden_states)
@@ -487,17 +490,18 @@ class GPTDolomiteModel(GPTDolomitePreTrainedModel):
         #     hidden_states -> (batch_size, query_length, num_heads * head_dim)
         # ==========================================================================================
 
-        alibi_bias = self._get_alibi_bias(
-            attention_mask, batch_size, query_length, key_length, device, hidden_states.dtype
-        )
+        # alibi_bias = self._get_alibi_bias(
+        #     attention_mask, batch_size, query_length, key_length, device, hidden_states.dtype
+        # )
 
         # ==========================================================================================
         # alibi_bias -> (batch_size, num_heads, query_length, key_length)
         # ==========================================================================================
 
-        rope_cos_sin = self._get_rope_cos_sin(
-            key_length, position_ids, dtype=hidden_states.dtype, device=hidden_states.device
-        )
+        # rope_cos_sin = self._get_rope_cos_sin(
+        #     key_length, position_ids, dtype=hidden_states.dtype, device=hidden_states.device
+        # )
+        rope_cos_sin = None
 
         # ==========================================================================================
         # padding_free:
@@ -506,9 +510,16 @@ class GPTDolomiteModel(GPTDolomitePreTrainedModel):
         #     rope_cos_sin -> 2 * (key_length, head_dim)
         # ==========================================================================================
 
-        attention_mask = self._get_maybe_causal_mask(
-            attention_mask, alibi_bias, batch_size, query_length, key_length, hidden_states.dtype, device
-        )
+        # attention_mask = self._get_maybe_causal_mask(
+        #     attention_mask, alibi_bias, batch_size, query_length, key_length, hidden_states.dtype, device
+        # )
+        attention_mask = None
+
+        with torch.no_grad():
+            # cu_row_blocks, first_row_block, sequence_ids
+            sb_metadata = sb_varlen.row_block_counts_and_sequence_ids(
+                cu_seqlens[1:], sb_varlen.BLOCK_M, sb_varlen.BLOCK_N
+            )
 
         return (
             output_hidden_states,
@@ -519,6 +530,7 @@ class GPTDolomiteModel(GPTDolomitePreTrainedModel):
             position_ids,
             rope_cos_sin,
             past_key_values,
+            sb_metadata,
         )
 
     def _setup_positional_encoding(self) -> None:

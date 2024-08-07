@@ -7,7 +7,7 @@ from ...modeling_utils import get_attention_module, get_normalization_function
 from ...modeling_utils.attention import Attention
 from .config import GPTDolomiteConfig
 from .mlp import MLP
-from .sb_varlen import sb_flash_attn_varlen
+from .sb_varlen import sb_attn_varlen_, sb_flash_attn_varlen
 
 
 # from flash_attn.flash_attn_interface import flash_attn_varlen_func
@@ -22,6 +22,7 @@ class PaddingFreeSBAttention(Attention):
         rope_cos_sin: torch.Tensor | None = None,
         cu_seqlens: torch.Tensor | None = None,
         max_seqlen: torch.Tensor | None = None,
+        sb_metadata=None,
     ) -> torch.Tensor:
         assert past_key_values is None
 
@@ -74,12 +75,24 @@ class PaddingFreeSBAttention(Attention):
         # attn_output = attn_output.permute(1, 0, 2).contiguous()
 
         v_ = value.permute(1, 0, 2)
-        attn_output, rem = sb_flash_attn_varlen(
+
+        # attn_output, rem = sb_flash_attn_varlen(
+        #     q=query.permute(1, 0, 2),
+        #     k=key.permute(1, 0, 2),
+        #     v=v_,
+        #     cu_seqlens=cu_seqlens,
+        #    inv_temp=softmax_scale,
+        # )
+        cu_row_blocks, first_row_block, sequence_ids = sb_metadata
+        attn_output, rem = sb_attn_varlen_(
             q=query.permute(1, 0, 2),
             k=key.permute(1, 0, 2),
             v=v_,
-            cu_seqlens=cu_seqlens,
             inv_temp=softmax_scale,
+            cu_seqlens=cu_seqlens,
+            first_row_block=first_row_block,
+            cu_row_blocks=cu_row_blocks,
+            sequence_ids=sequence_ids,
         )
         attn_output = attn_output + rem[..., None] * v_
         attn_output = attn_output.permute(1, 0, 2)
@@ -190,6 +203,7 @@ class GPTDolomiteBlock(nn.Module):
         rope_cos_sin: torch.Tensor | None = None,
         cu_seqlens: torch.Tensor | None = None,
         max_seqlen: torch.Tensor | None = None,
+        sb_metadata=None,
     ) -> tuple[torch.Tensor]:
         residual = hidden_states
         hidden_states = self.ln_1(hidden_states)
@@ -201,6 +215,7 @@ class GPTDolomiteBlock(nn.Module):
             rope_cos_sin=rope_cos_sin,
             cu_seqlens=cu_seqlens,
             max_seqlen=max_seqlen,
+            sb_metadata=sb_metadata,
         )
 
         if self.m_residual is not None:
