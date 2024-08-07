@@ -9,3 +9,4 @@ from .gpt_dolomite import GPTDolomiteConfig, GPTDolomiteForCausalLM, GPTDolomite
 from .gpt_dolomite_TP import GPTDolomiteForCausalLM_TP, GPTDolomiteModel_TP
 from .moe_dolomite import MoEDolomiteConfig, MoEDolomiteForCausalLM, MoEDolomiteModel
 from .rnn_dolomite import RNNDolomiteConfig, RNNDolomiteForCausalLM, RNNDolomiteModel
+from .sb_dolomite import GPTDolomiteConfig, GPTDolomiteForCausalLM, GPTDolomiteModel
