@@ -4,11 +4,13 @@ from transformers import DynamicCache
 
 from ...enums import AttentionHeadType
 from ...modeling_utils import get_attention_module, get_normalization_function
+from ...modeling_utils.attention import Attention
 from .config import GPTDolomiteConfig
 from .mlp import MLP
+from .sb_varlen import sb_flash_attn_varlen
 
-from ...modeling_utils.attention import  Attention
-from flash_attn.flash_attn_interface import flash_attn_varlen_func
+
+# from flash_attn.flash_attn_interface import flash_attn_varlen_func
 
 
 class PaddingFreeSBAttention(Attention):
@@ -46,20 +48,31 @@ class PaddingFreeSBAttention(Attention):
         # ==========================================================================================
 
         softmax_scale = self._get_softmax_scale()
-        dropout_p = self.attn_pdrop if self.training else 0
+        self.attn_pdrop if self.training else 0
+        # attn_output = flash_attn_varlen_func(
+        #     query,
+        #     key,
+        #     value,
+        #     cu_seqlens_q=cu_seqlens,
+        #     cu_seqlens_k=cu_seqlens,
+        #     max_seqlen_q=max_seqlen,
+        #     max_seqlen_k=max_seqlen,
+        #     dropout_p=dropout_p,
+        #     softmax_scale=softmax_scale,
+        #     causal=self.causal,
+        # )
 
-        attn_output = flash_attn_varlen_func(
-            query,
-            key,
-            value,
-            cu_seqlens_q=cu_seqlens,
-            cu_seqlens_k=cu_seqlens,
-            max_seqlen_q=max_seqlen,
-            max_seqlen_k=max_seqlen,
-            dropout_p=dropout_p,
-            softmax_scale=softmax_scale,
-            causal=self.causal,
+        v_ = value.permute(1, 0, 2)
+        attn_output, rem = sb_flash_attn_varlen(
+            q=query.permute(1, 0, 2).contiguous(),
+            k=key.permute(1, 0, 2).contiguous(),
+            v=v_.contiguous(),
+            cu_seqlens=torch.tensor([query.size(0)], dtype=torch.int32, device=query.device),
+            inv_temp=softmax_scale,
+            zero_start=False,
         )
+        attn_output = attn_output + rem[..., None] * v_
+        attn_output = attn_output.permute(1, 0, 2).contiguous()
 
         # ==========================================================================================
         # attn_output -> (total_q, num_heads, head_dim)
