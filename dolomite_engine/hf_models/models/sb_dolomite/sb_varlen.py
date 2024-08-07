@@ -703,7 +703,6 @@ def sb_flash_attn_varlen(q, k, v, cu_seqlens, inv_temp=None, zero_start=True):
         inv_temp = 1 / math.sqrt(q.size(-1))
     with torch.no_grad():
         cu_row_blocks, first_row_block, sequence_ids = row_block_counts_and_sequence_ids(cu_seqlens, BLOCK_M, BLOCK_N)
-
     return sb_attn_varlen_(q, k, v, inv_temp, cu_seqlens, first_row_block, cu_row_blocks, sequence_ids)
 
 
