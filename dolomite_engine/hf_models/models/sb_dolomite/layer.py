@@ -48,7 +48,7 @@ class PaddingFreeSBAttention(Attention):
         # value -> (total_q, num_key_value_heads, head_dim)
         # ==========================================================================================
 
-        softmax_scale = self._get_softmax_scale()
+        softmax_scale = 2 * self._get_softmax_scale()
         self.attn_pdrop if self.training else 0
         # attn_output = flash_attn_varlen_func(
         #     query,
@@ -73,23 +73,30 @@ class PaddingFreeSBAttention(Attention):
         # )
         # attn_output = attn_output + rem[..., None] * v_
         # attn_output = attn_output.permute(1, 0, 2).contiguous()
+        """
+        v_ = value.permute(1, 0, 2)
+        cu_row_blocks_, first_row_block_, sequence_ids_ = sb_metadata
+        attn_output, rem, sb_metadata_ = sb_flash_attn_varlen(
+            q=query.permute(1, 0, 2),
+            k=key.permute(1, 0, 2),
+            v=v_,
+            cu_seqlens=cu_seqlens,
+           inv_temp=softmax_scale,
+        )
+        cu_row_blocks, first_row_block, sequence_ids = sb_metadata_
+        assert (cu_row_blocks_ == cu_row_blocks).all(), "cu_row_blocks don't match"
+        assert (first_row_block_ == first_row_block).all(), "first_row_block don't match"
+        assert (sequence_ids == sequence_ids_).all(), "sequence_idsdon't match"
+        """
+        cu_row_blocks, first_row_block, sequence_ids = sb_metadata
 
         v_ = value.permute(1, 0, 2)
-
-        # attn_output, rem = sb_flash_attn_varlen(
-        #     q=query.permute(1, 0, 2),
-        #     k=key.permute(1, 0, 2),
-        #     v=v_,
-        #     cu_seqlens=cu_seqlens,
-        #    inv_temp=softmax_scale,
-        # )
-        cu_row_blocks, first_row_block, sequence_ids = sb_metadata
         attn_output, rem = sb_attn_varlen_(
             q=query.permute(1, 0, 2),
             k=key.permute(1, 0, 2),
             v=v_,
             inv_temp=softmax_scale,
-            cu_seqlens=cu_seqlens,
+            cu_seqlens=cu_seqlens[1:],
             first_row_block=first_row_block,
             cu_row_blocks=cu_row_blocks,
             sequence_ids=sequence_ids,
@@ -181,7 +188,6 @@ class GPTDolomiteBlock(nn.Module):
         )
 
         assert use_padding_free_transformer
-        print("Directly load PaddingFreeSB")
 
         # self.attn = get_attention_module(
         #     config, True, attention_implementation, use_padding_free_transformer, layer_idx
