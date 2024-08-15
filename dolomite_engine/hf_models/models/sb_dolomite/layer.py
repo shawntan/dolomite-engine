@@ -48,7 +48,7 @@ class PaddingFreeSBAttention(Attention):
         # value -> (total_q, num_key_value_heads, head_dim)
         # ==========================================================================================
 
-        softmax_scale = 2 * self._get_softmax_scale()
+        softmax_scale = self._get_softmax_scale()
         self.attn_pdrop if self.training else 0
         # attn_output = flash_attn_varlen_func(
         #     query,
@@ -89,7 +89,6 @@ class PaddingFreeSBAttention(Attention):
         assert (sequence_ids == sequence_ids_).all(), "sequence_idsdon't match"
         """
         cu_row_blocks, first_row_block, sequence_ids = sb_metadata
-
         v_ = value.permute(1, 0, 2)
         attn_output, rem = sb_attn_varlen_(
             q=query.permute(1, 0, 2),
