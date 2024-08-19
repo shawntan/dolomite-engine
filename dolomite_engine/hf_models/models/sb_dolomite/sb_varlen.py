@@ -6,9 +6,9 @@ import triton.language as tl
 
 
 log2 = math.log(2)
-inv_log2 = 1 / log2
-ALLOW_TF32 = False
-DEBUG = False
+inv_log2: tl.constexpr = 1 / log2
+ALLOW_TF32: tl.constexpr = False
+DEBUG: tl.constexpr = False
 BLOCK_M = 64
 BLOCK_N = 64
 
@@ -28,7 +28,7 @@ def row_block_counts_and_sequence_ids(cu_seqlens: torch.Tensor, BLOCK_M: int, BL
 
 
 @triton.jit
-def softplus(x):
+def softplus(x, DEBUG: tl.constexpr = DEBUG):
     if DEBUG:
         return x
     else:
@@ -36,7 +36,9 @@ def softplus(x):
 
 
 @triton.jit
-def compute_attn_weights(q, k, cm, neg_log_acc, qk_scale, mask, MASK: tl.constexpr):
+def compute_attn_weights(
+    q, k, cm, neg_log_acc, qk_scale, mask, MASK: tl.constexpr, ALLOW_TF32: tl.constexpr = ALLOW_TF32
+):
     qk = tl.dot(q, k, allow_tf32=ALLOW_TF32)
     qk *= qk_scale
     neg_log = -softplus(qk).to(q.dtype)
@@ -87,6 +89,8 @@ def _forward(
     BLOCK_M: tl.constexpr,
     BLOCK_N: tl.constexpr,
     BLOCK_D: tl.constexpr,
+    ALLOW_TF32: tl.constexpr = ALLOW_TF32,
+    inv_log2: tl.constexpr = inv_log2,
 ):
 
     head_id = tl.program_id(0)
@@ -303,6 +307,8 @@ def _backward_dq(
     BLOCK_M: tl.constexpr,
     BLOCK_N: tl.constexpr,
     BLOCK_D: tl.constexpr,
+    inv_log2: tl.constexpr = inv_log2,
+    ALLOW_TF32: tl.constexpr = ALLOW_TF32,
 ):
     head_id = tl.program_id(0)
     M_block_id = tl.program_id(1)
@@ -442,6 +448,7 @@ def _backward_dkdv(
     BLOCK_M: tl.constexpr,
     BLOCK_N: tl.constexpr,
     BLOCK_D: tl.constexpr,
+    inv_log2: tl.constexpr = inv_log2,
 ):
 
     head_id = tl.program_id(0)
