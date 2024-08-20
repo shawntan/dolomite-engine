@@ -1,3 +1,4 @@
+import math
 from typing import Any, Mapping
 
 import torch
@@ -8,7 +9,8 @@ from torch.distributed._tensor.placement_types import Replicate, Shard
 from torch.distributed._tensor.placement_types import _Partial as Partial
 
 from .....utils import ProcessGroupManager, is_scattermoe_available
-from ....modeling_utils import ParameterizedLinear
+from ....enums import InitMethod
+from ....modeling_utils import ParameterizedLinear, get_activation_function, is_glu
 from ....modeling_utils_TP import (
     dtensor_to_tensor,
     get_module_placements,
@@ -16,10 +18,12 @@ from ....modeling_utils_TP import (
     tensor_to_dtensor,
 )
 from ....utils import divide_if_divisible
+from ...moe_dolomite.config import MoEDolomiteConfig
 from ...moe_dolomite.moe.scatter import ParameterizedScatteredExperts
 
 
 if is_scattermoe_available():
+    import scattermoe
     from scattermoe.parallel_experts import parallel_linear as scattered_experts
 
 
@@ -215,3 +219,87 @@ class RowParallelScatteredExperts(ParameterizedScatteredExperts):
     def load_state_dict(self, state_dict: Mapping[str, Any], strict: bool = True, assign: bool = False) -> None:
         state_dict = modify_state_dict_to_dtensor_dict(self, state_dict)
         return super().load_state_dict(state_dict, strict, assign)
+
+
+class ScatterMoETP(nn.Module):
+    def __init__(
+        self, config: MoEDolomiteConfig, use_padding_free_transformer: bool, layer_idx: int | None = None
+    ) -> None:
+        nn.Module.__init__(self)
+
+        self.num_experts = config.num_experts
+        self.top_k = config.num_experts_per_tok
+        self.use_padding_free_transformer = use_padding_free_transformer
+        self.layer_idx = layer_idx
+
+        self.hidden_size = config.hidden_size
+        self.intermediate_size = config.n_inner
+
+        activation_function = config.activation_function
+
+        initializer_range = config.initializer_range
+        m_width = config.m_width
+        n_layer = config.n_layer
+        init_method = InitMethod(config.init_method)
+        residual_dropout = config.resid_pdrop
+
+        self.gate = ReplicatedParallelLinear(
+            in_features=self.hidden_size,
+            out_features=config.num_experts,
+            std=config.initializer_range,
+        )
+
+        std = initializer_range
+        if init_method == InitMethod.mup:
+            std /= math.sqrt(m_width)
+        self.c_fc = ColumnParallelScatteredExperts(
+            num_experts=config.num_experts,
+            in_features=self.hidden_size,
+            out_features=2 * self.intermediate_size if is_glu(activation_function) else self.intermediate_size,
+            std=std,
+        )
+
+        self.act = get_activation_function(activation_function)
+
+        std = initializer_range / math.sqrt(2 * n_layer)
+        if init_method == InitMethod.mup:
+            std /= math.sqrt(m_width)
+        self.c_proj = RowParallelScatteredExperts(
+            num_experts=config.num_experts,
+            in_features=self.intermediate_size,
+            out_features=self.hidden_size,
+            std=std,
+        )
+
+        self.dropout = nn.Identity() if residual_dropout == 0 else nn.Dropout(residual_dropout)
+
+    def _compute_experts(
+        self, hidden_states: torch.Tensor, router_weights: torch.Tensor, selected_experts: torch.Tensor
+    ) -> torch.Tensor:
+        with torch.no_grad():
+            sorted_expert_idxs, sorted_scattered_idxs = scattermoe.kernels.ops.flatten_and_sort(selected_experts)
+            padded_block_idxs, expert_offsets = scattermoe.kernels.ops.padded_block_indices(
+                sorted_expert_idxs, self.num_experts
+            )
+
+        hidden_states = self.c_fc(
+            hidden_states,
+            self.top_k,
+            sorted_expert_idxs,
+            sorted_scattered_idxs,
+            padded_block_idxs,
+            expert_offsets,
+            grouped_out=True,
+        )
+        hidden_states = self.act(hidden_states)
+        hidden_states = self.c_proj(
+            hidden_states,
+            1,
+            sorted_expert_idxs,
+            sorted_scattered_idxs,
+            padded_block_idxs,
+            expert_offsets,
+            grouped_in=True,
+            gates=router_weights,
+        )
+        return hidden_states
