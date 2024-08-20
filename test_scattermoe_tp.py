@@ -9,7 +9,7 @@ from transformers import set_seed
 
 from dolomite_engine.hf_models.models.moe_dolomite.config import MoEDolomiteConfig
 from dolomite_engine.hf_models.models.moe_dolomite.moe.scatter import ParameterizedScatteredExperts, ScatterMoE
-from dolomite_engine.hf_models.models.moe_dolomite_TP.moe_TP.scatter import RowParallelScatteredExperts
+from dolomite_engine.hf_models.models.moe_dolomite_TP.moe_TP.scatter import ScatterMoETP
 from dolomite_engine.utils import ProcessGroupManager
 
 
@@ -31,6 +31,7 @@ torch_dtype = torch.float32
 batch_size = 512
 rank = torch.distributed.get_rank()
 local_moe = ScatterMoE(config, use_padding_free_transformer=False, layer_idx=0)
+global_moe = ScatterMoETP(config, use_padding_free_transformer=False, layer_idx=0)
 
 input_tensor = torch.randn(batch_size, config.n_embd, device=torch.cuda.current_device(), dtype=torch_dtype)
 gate_weight = local_moe.gate.weight
