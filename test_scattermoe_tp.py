@@ -31,7 +31,7 @@ torch_dtype = torch.float32
 batch_size = 512
 rank = torch.distributed.get_rank()
 local_moe = ScatterMoE(config, use_padding_free_transformer=False, layer_idx=0)
-global_moe = ScatterMoETP(config, use_padding_free_transformer=False, layer_idx=0)
+shard_moe = ScatterMoETP(config, use_padding_free_transformer=False, layer_idx=0)
 
 input_tensor = torch.randn(batch_size, config.n_embd, device=torch.cuda.current_device(), dtype=torch_dtype)
 gate_weight = local_moe.gate.weight
@@ -42,16 +42,7 @@ torch.distributed.broadcast(input_tensor, 0)
 torch.distributed.broadcast(gate_weight, 0)
 torch.distributed.broadcast(c_fc_weight, 0)
 torch.distributed.broadcast(c_proj_weight, 0)
-
-
-model_tp = _RowParallelScatteredExperts(
-    num_experts=num_experts,
-    input_size=in_features,
-    output_size=out_features,
-    std=std,
-    device=torch.device(torch.cuda.current_device()),
-    dtype=torch_dtype,
-)
+print(shard_moe)
 
 model.load_state_dict({"weight": weight})
 weight = weight.view(num_experts, out_features, tp_size, -1)
