@@ -45,8 +45,14 @@ torch.distributed.broadcast(gate_weight, 0)
 torch.distributed.broadcast(c_fc_weight, 0)
 torch.distributed.broadcast(c_proj_weight, 0)
 if rank == 0:
+    print("Rank", rank)
     print(local_moe)
     print(shard_moe)
+
+local_moe.load_state_dict({"gate.weight": gate_weight, "c_fc.weight": c_fc_weight, "c_proj.weight": c_proj_weight})
+
+torch.distributed.barrier()
+
 shard_moe(input_tensor)
 
 ProcessGroupManager.destroy_process_groups()
@@ -55,7 +61,6 @@ model.load_state_dict({"weight": weight})
 weight = weight.view(num_experts, out_features, tp_size, -1)
 model_tp.load_state_dict({"weight": weight[..., rank, :]})
 
-torch.distributed.barrier()
 
 with torch.no_grad():
     sorted_expert_idxs, sorted_scattered_idxs = scattermoe.kernels.ops.flatten_and_sort(expert_idxs)
