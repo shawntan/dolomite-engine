@@ -320,3 +320,7 @@ class ScatterMoETP(SparseMoE):
             gates=router_weights,
         )
         return hidden_states
+
+    def load_state_dict(self, state_dict: Mapping[str, Any], strict: bool = True, assign: bool = False) -> None:
+        state_dict = modify_state_dict_to_dtensor_dict(self, state_dict)
+        return super().load_state_dict(state_dict, strict, assign)
