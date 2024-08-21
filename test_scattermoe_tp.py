@@ -47,10 +47,32 @@ torch.distributed.broadcast(c_proj_weight, 0)
 if rank == 0:
     print("Rank", rank)
     print(local_moe)
+    print([(n, p.size()) for n, p in local_moe.named_parameters()])
     print(shard_moe)
+    print([(n, p.size()) for n, p in local_moe.named_parameters()])
 
+if rank == 0:
+    print("Distributing local_moe params...")
 local_moe.load_state_dict({"gate.weight": gate_weight, "c_fc.weight": c_fc_weight, "c_proj.weight": c_proj_weight})
+torch.distributed.barrier()
 
+if rank == 0:
+    print("Distributing sharded_moe params...")
+c_fc_1_weight, c_fc_2_weight = c_fc_weight.chunk(2, dim=1)
+sharded_inter_dim = shard_moe.c_proj.out_features_per_device
+shard_moe.load_state_dict(
+    {
+        "gate.weight": gate_weight,
+        "c_fc.weight": torch.cat(
+            (
+                c_fc_1_weight[:, sharded_inter_dim * rank : (rank + 1) * sharded_inter_dim, :],
+                c_fc_2_weight[:, sharded_inter_dim * rank : (rank + 1) * sharded_inter_dim, :],
+            ),
+            dim=1,
+        ),
+        "c_proj.weight": c_proj_weight[:, :, sharded_inter_dim * rank : (rank + 1) * sharded_inter_dim],
+    }
+)
 torch.distributed.barrier()
 
 shard_moe(input_tensor)

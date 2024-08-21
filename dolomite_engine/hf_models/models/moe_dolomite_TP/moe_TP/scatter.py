@@ -293,7 +293,6 @@ class ScatterMoETP(SparseMoE):
     def _compute_experts(
         self, hidden_states: torch.Tensor, router_weights: torch.Tensor, selected_experts: torch.Tensor
     ) -> torch.Tensor:
-        print(selected_experts)
         with torch.no_grad():
             sorted_expert_idxs, sorted_scattered_idxs = scattermoe.kernels.ops.flatten_and_sort(selected_experts)
             padded_block_idxs, expert_offsets = scattermoe.kernels.ops.padded_block_indices(
