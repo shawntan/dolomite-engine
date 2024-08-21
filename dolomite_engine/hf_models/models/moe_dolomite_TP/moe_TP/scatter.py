@@ -19,6 +19,7 @@ from ....modeling_utils_TP import (
 )
 from ....utils import divide_if_divisible
 from ...moe_dolomite.config import MoEDolomiteConfig
+from ...moe_dolomite.moe.base import SparseMoE
 from ...moe_dolomite.moe.scatter import ParameterizedScatteredExperts
 
 
@@ -57,7 +58,7 @@ class ReplicatedParallelLinear(ParameterizedLinear):
 
     def extra_repr(self) -> str:
         return "in_features={}, out_features_per_device={}, bias={}".format(
-            self.in_features, self.out_features_per_device, self.bias is not None
+            self.in_features, self.out_features, self.bias is not None
         )
 
     def load_state_dict(self, state_dict: Mapping[str, Any], strict: bool = True, assign: bool = False) -> None:
@@ -71,6 +72,7 @@ class ColumnParallelScatteredExperts(ParameterizedScatteredExperts):
         num_experts: int,
         in_features: int,
         out_features: int,
+        add_bias: bool = True,
         device: torch.device | None = None,
         dtype: torch.dtype | None = None,
         std: float | None = None,
@@ -89,6 +91,7 @@ class ColumnParallelScatteredExperts(ParameterizedScatteredExperts):
             num_experts=num_experts,
             in_features=in_features,
             out_features=self.out_features_per_device,
+            add_bias=add_bias,
             device=device,
             dtype=dtype,
             std=std,
@@ -150,6 +153,7 @@ class RowParallelScatteredExperts(ParameterizedScatteredExperts):
         num_experts: int,
         in_features: int,
         out_features: int,
+        add_bias: bool = True,
         device: torch.device | None = None,
         dtype: torch.dtype | None = None,
         std: float | None = None,
@@ -168,6 +172,7 @@ class RowParallelScatteredExperts(ParameterizedScatteredExperts):
             num_experts=num_experts,
             in_features=self.in_features_per_device,
             out_features=out_features,
+            add_bias=add_bias,
             device=device,
             dtype=dtype,
             std=std,
@@ -221,9 +226,14 @@ class RowParallelScatteredExperts(ParameterizedScatteredExperts):
         return super().load_state_dict(state_dict, strict, assign)
 
 
-class ScatterMoETP(nn.Module):
+class ScatterMoETP(SparseMoE):
     def __init__(
-        self, config: MoEDolomiteConfig, use_padding_free_transformer: bool, layer_idx: int | None = None
+        self,
+        config: MoEDolomiteConfig,
+        use_padding_free_transformer: bool,
+        layer_idx: int | None = None,
+        device: torch.device | None = None,
+        dtype: torch.dtype | None = None,
     ) -> None:
         nn.Module.__init__(self)
 
@@ -252,11 +262,15 @@ class ScatterMoETP(nn.Module):
         std = initializer_range
         if init_method == InitMethod.mup:
             std /= math.sqrt(m_width)
+
         self.c_fc = ColumnParallelScatteredExperts(
             num_experts=config.num_experts,
             in_features=self.hidden_size,
             out_features=2 * self.intermediate_size if is_glu(activation_function) else self.intermediate_size,
+            add_bias=config.add_bias,
             std=std,
+            device=device,
+            dtype=dtype,
         )
 
         self.act = get_activation_function(activation_function)
@@ -268,7 +282,10 @@ class ScatterMoETP(nn.Module):
             num_experts=config.num_experts,
             in_features=self.intermediate_size,
             out_features=self.hidden_size,
+            add_bias=config.add_bias,
             std=std,
+            device=device,
+            dtype=dtype,
         )
 
         self.dropout = nn.Identity() if residual_dropout == 0 else nn.Dropout(residual_dropout)
@@ -276,6 +293,7 @@ class ScatterMoETP(nn.Module):
     def _compute_experts(
         self, hidden_states: torch.Tensor, router_weights: torch.Tensor, selected_experts: torch.Tensor
     ) -> torch.Tensor:
+        print(selected_experts)
         with torch.no_grad():
             sorted_expert_idxs, sorted_scattered_idxs = scattermoe.kernels.ops.flatten_and_sort(selected_experts)
             padded_block_idxs, expert_offsets = scattermoe.kernels.ops.padded_block_indices(

@@ -22,16 +22,18 @@ ProcessGroupManager(tensor_parallel_size=tp_size)
 # cuda_rng_tracker = CUDA_RNGStatesTracker()
 # cuda_rng_tracker.add("tensor-parallel-seed", 42)
 # set_cuda_rng_tracker(cuda_rng_tracker)
-config = MoEDolomiteConfig(add_bias=False)
+config = MoEDolomiteConfig(activation_function="swiglu", add_bias=False)
 torch_dtype = torch.float32
 # num_experts = 8
 # k = 2
 # in_features = 1024
 # out_features = 1024
-batch_size = 512
+batch_size = 16
 rank = torch.distributed.get_rank()
-local_moe = ScatterMoE(config, use_padding_free_transformer=False, layer_idx=0)
-shard_moe = ScatterMoETP(config, use_padding_free_transformer=False, layer_idx=0)
+local_moe = ScatterMoE(config, use_padding_free_transformer=True, layer_idx=0)
+shard_moe = ScatterMoETP(
+    config, device=torch.cuda.current_device(), dtype=torch_dtype, use_padding_free_transformer=True, layer_idx=0
+)
 
 input_tensor = torch.randn(batch_size, config.n_embd, device=torch.cuda.current_device(), dtype=torch_dtype)
 gate_weight = local_moe.gate.weight
@@ -42,8 +44,13 @@ torch.distributed.broadcast(input_tensor, 0)
 torch.distributed.broadcast(gate_weight, 0)
 torch.distributed.broadcast(c_fc_weight, 0)
 torch.distributed.broadcast(c_proj_weight, 0)
-print(shard_moe)
+if rank == 0:
+    print(local_moe)
+    print(shard_moe)
+shard_moe(input_tensor)
 
+ProcessGroupManager.destroy_process_groups()
+exit()
 model.load_state_dict({"weight": weight})
 weight = weight.view(num_experts, out_features, tp_size, -1)
 model_tp.load_state_dict({"weight": weight[..., rank, :]})
@@ -88,5 +95,3 @@ if rank == 0:
     print(output_tp.size())
     print(output_ref.size())
 print((output_tp - output_ref).abs().max())
-
-ProcessGroupManager.destroy_process_groups()
