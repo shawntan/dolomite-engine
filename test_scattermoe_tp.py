@@ -59,7 +59,7 @@ torch.distributed.barrier()
 if rank == 0:
     print("Distributing sharded_moe params...")
 c_fc_1_weight, c_fc_2_weight = c_fc_weight.chunk(2, dim=1)
-sharded_inter_dim = shard_moe.c_proj.out_features_per_device
+sharded_inter_dim = shard_moe.c_proj.in_features_per_device
 shard_moe.load_state_dict(
     {
         "gate.weight": gate_weight,
