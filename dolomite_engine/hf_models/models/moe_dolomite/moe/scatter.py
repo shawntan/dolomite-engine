@@ -28,7 +28,9 @@ class ParameterizedScatteredExperts(ParameterizedExperts):
     ) -> None:
         assert not add_bias, "scattermoe doesn't support bias"
 
-        super().__init__(num_experts, in_features, out_features, add_bias=add_bias, std=std)
+        super().__init__(
+            num_experts, in_features, out_features, add_bias=add_bias, std=std, device=device, dtype=dtype
+        )
 
     def forward(
         self,

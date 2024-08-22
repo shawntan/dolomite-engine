@@ -257,6 +257,8 @@ class ScatterMoETP(SparseMoE):
             in_features=self.hidden_size,
             out_features=config.num_experts,
             std=config.initializer_range,
+            device=device,
+            dtype=dtype,
         )
 
         std = initializer_range
