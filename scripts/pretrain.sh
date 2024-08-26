@@ -12,7 +12,6 @@ NODE_RANK=$(($(echo ${LSB_MCPU_HOSTS} | tr ' ' '\n' | sed 'n; d' | grep -n -m1 $
 export WANDB__SERVICE_WAIT=300
 
 TOKENIZERS_PARALLELISM=false \
-WANDB_MODE=offline \
 	torchrun --nnodes=$NNODES \
     --node_rank=$NODE_RANK \
     --nproc_per_node=$GPUS_PER_NODE \
