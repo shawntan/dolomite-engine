@@ -1,10 +1,14 @@
+import math
+
 import torch
 import torch.nn as nn
 from transformers import DynamicCache
 
-from ...enums import AttentionHeadType
+from ...config import CommonConfig
+from ...enums import AttentionHeadType, InitMethod, PositionEmbeddingType
 from ...modeling_utils import get_attention_module, get_normalization_function
 from ...modeling_utils.attention import Attention
+from ...modeling_utils.linear import ParameterizedLinear
 from .config import GPTDolomiteConfig
 from .mlp import MLP
 from .sb_varlen import sb_attn_varlen_, sb_flash_attn_varlen
@@ -14,6 +18,22 @@ from .sb_varlen import sb_attn_varlen_, sb_flash_attn_varlen
 
 
 class PaddingFreeSBAttention(Attention):
+    def __init__(self, config: CommonConfig, causal: bool, layer_idx: int | None = None) -> None:
+        super().__init__(config, causal, layer_idx)
+        if config.add_qkv_bias:
+            init_method = InitMethod(config.init_method)
+            initializer_range = config.initializer_range
+            m_width = config.m_width
+            std = initializer_range
+            if init_method == InitMethod.mup:
+                std /= math.sqrt(m_width)
+            self.c_attn = ParameterizedLinear(
+                self.hidden_size,
+                self.hidden_size + 2 * self.num_key_value_heads * self.head_dim,
+                bias=True,
+                std=std,
+            )
+
     def forward(
         self,
         hidden_states: torch.Tensor,
