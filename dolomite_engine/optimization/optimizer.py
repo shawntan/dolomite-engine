@@ -13,7 +13,7 @@ from torch.optim.rprop import Rprop as TorchRprop
 from torch.optim.sgd import SGD as TorchSGD
 
 from ..enums import LRDecaySchedule, ParamsGroupMethod
-from ..hf_models import GPTDolomiteConfig, GPTDolomiteForCausalLM, RNNDolomiteConfig, RNNDolomiteForCausalLM
+from ..hf_models import RNNDolomiteConfig, RNNDolomiteForCausalLM, SBDolomiteConfig, SBDolomiteForCausalLM
 from ..hf_models.modeling_utils import Attention
 from ..hf_models.models.gpt_dolomite.layer import MLP
 from ..model_wrapper import ModelWrapper
@@ -84,10 +84,10 @@ def _get_param_groups(model: ModelWrapper, optimizer_class_args: dict, params_gr
         trainable_parameters_or_param_groups = model.parameters()
     elif params_group_method == ParamsGroupMethod.mup:
         assert isinstance(
-            model.config, (GPTDolomiteConfig, RNNDolomiteConfig)
+            model.config, (SBDolomiteConfig, RNNDolomiteConfig)
         ), "mup is not supported with this model architecture"
         assert isinstance(
-            model.model, (GPTDolomiteForCausalLM, RNNDolomiteForCausalLM)
+            model.model, (SBDolomiteForCausalLM, RNNDolomiteForCausalLM)
         ), "mup is not supported with this model architecture"
         assert (
             model.config.init_method == "mup"

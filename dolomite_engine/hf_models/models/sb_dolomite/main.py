@@ -4,16 +4,16 @@ from transformers import DynamicCache
 from transformers.modeling_outputs import CausalLMOutputWithPast
 
 from ...modeling_utils import ParameterizedEmbedding, ParameterizedLinear
-from .base import GPTDolomiteModel, GPTDolomitePreTrainedModel
-from .config import GPTDolomiteConfig
+from .base import SBDolomiteModel, SBDolomitePreTrainedModel
+from .config import SBDolomiteConfig
 
 
-class GPTDolomiteForCausalLM(GPTDolomitePreTrainedModel):
+class SBDolomiteForCausalLM(SBDolomitePreTrainedModel):
     _tied_weights_keys = ["lm_head.weight"]
 
-    def __init__(self, config: GPTDolomiteConfig, **kwargs) -> None:
+    def __init__(self, config: SBDolomiteConfig, **kwargs) -> None:
         super().__init__(config, **kwargs)
-        self.transformer = GPTDolomiteModel(config, **kwargs)
+        self.transformer = SBDolomiteModel(config, **kwargs)
 
         if not self._tied_word_embeddings:
             self.lm_head = ParameterizedLinear(

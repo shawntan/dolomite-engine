@@ -7,22 +7,22 @@ from .models import (
     GPTCrossLayerConfig,
     GPTCrossLayerForCausalLM,
     GPTCrossLayerModel,
-    GPTDolomiteConfig,
-    GPTDolomiteForCausalLM,
     GPTDolomiteForCausalLM_TP,
-    GPTDolomiteModel,
     MoEDolomiteConfig,
     MoEDolomiteForCausalLM,
     MoEDolomiteModel,
     RNNDolomiteConfig,
     RNNDolomiteForCausalLM,
     RNNDolomiteModel,
+    SBDolomiteConfig,
+    SBDolomiteForCausalLM,
+    SBDolomiteModel,
 )
 
 
 # (AutoConfig, AutoModel, AutoModelForCausalLM)
 _CUSTOM_MODEL_REGISTRY = [
-    (GPTDolomiteConfig, GPTDolomiteModel, GPTDolomiteForCausalLM),
+    (SBDolomiteConfig, SBDolomiteModel, SBDolomiteForCausalLM),
     (MoEDolomiteConfig, MoEDolomiteModel, MoEDolomiteForCausalLM),
     (GPTCrossLayerConfig, GPTCrossLayerModel, GPTCrossLayerForCausalLM),
     (DenseMoEConfig, DenseMoEModel, DenseMoEForCausalLM),

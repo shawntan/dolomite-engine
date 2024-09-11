@@ -1,7 +1,7 @@
-from ...config import CommonConfig
+from ..gpt_dolomite.config import GPTDolomiteConfig
 
 
-class GPTDolomiteConfig(CommonConfig):
+class SBDolomiteConfig(GPTDolomiteConfig):
     model_type = "sb_dolomite"
 
     def __init__(

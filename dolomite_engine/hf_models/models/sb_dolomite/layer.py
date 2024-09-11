@@ -9,12 +9,9 @@ from ...enums import AttentionHeadType, InitMethod, PositionEmbeddingType
 from ...modeling_utils import get_attention_module, get_normalization_function
 from ...modeling_utils.attention import Attention
 from ...modeling_utils.linear import ParameterizedLinear
-from .config import GPTDolomiteConfig
-from .mlp import MLP
+from ..gpt_dolomite.mlp import MLP
+from .config import SBDolomiteConfig
 from .sb_varlen import sb_attn_varlen_, sb_flash_attn_varlen
-
-
-# from flash_attn.flash_attn_interface import flash_attn_varlen_func
 
 
 class PaddingFreeSBAttention(Attention):
@@ -178,14 +175,14 @@ class PaddingFreeSBAttention(Attention):
         return query, key, value
 
 
-class GPTDolomiteBlock(nn.Module):
+class SBDolomiteBlock(nn.Module):
     """
     Layer implementation for the transformer block
     """
 
     def __init__(
         self,
-        config: GPTDolomiteConfig,
+        config: SBDolomiteConfig,
         normalization_implementation: str,
         attention_implementation: str,
         use_padding_free_transformer: bool,

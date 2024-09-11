@@ -6,7 +6,7 @@ from ..modeling_utils import (
     interleave_query_key_value_tensor_for_attention,
     split_query_key_value_tensor_for_attention,
 )
-from ..models import GPTDolomiteConfig
+from ..models import SBDolomiteConfig
 from ..models.gpt_dolomite import interleave_up_gate_tensor_for_mlp, split_up_gate_tensor_for_mlp
 
 
@@ -34,7 +34,7 @@ def import_from_huggingface_llama(pretrained_model_name_or_path: str, save_path:
         tokenizer.save_pretrained(save_path, legacy_format=False)
 
 
-def _import_config_from_huggingface(original_config: LlamaConfig) -> GPTDolomiteConfig:
+def _import_config_from_huggingface(original_config: LlamaConfig) -> SBDolomiteConfig:
     assert original_config.hidden_act == "silu"
 
     if original_config.num_attention_heads == original_config.num_key_value_heads:
@@ -46,7 +46,7 @@ def _import_config_from_huggingface(original_config: LlamaConfig) -> GPTDolomite
 
     assert original_config.mlp_bias == original_config.attention_bias
 
-    config = GPTDolomiteConfig(
+    config = SBDolomiteConfig(
         vocab_size=original_config.vocab_size,
         n_positions=original_config.max_position_embeddings,
         n_embd=original_config.hidden_size,
@@ -150,7 +150,7 @@ def _import_state_dict_from_huggingface(
 
 
 def export_to_huggingface_llama(pretrained_model_name_or_path: str, save_path: str) -> None:
-    config: GPTDolomiteConfig = AutoConfig.from_pretrained(pretrained_model_name_or_path)
+    config: SBDolomiteConfig = AutoConfig.from_pretrained(pretrained_model_name_or_path)
     original_config = _export_config_to_huggingface(config)
 
     safetensors_weights_manager = SafeTensorsWeightsManager(pretrained_model_name_or_path)
@@ -176,7 +176,7 @@ def export_to_huggingface_llama(pretrained_model_name_or_path: str, save_path: s
         pass
 
 
-def _export_config_to_huggingface(config: GPTDolomiteConfig) -> LlamaConfig:
+def _export_config_to_huggingface(config: SBDolomiteConfig) -> LlamaConfig:
     assert config.activation_function == "swiglu"
     assert config.normalization_function == "rmsnorm"
     assert config.position_embedding_type == "rope"

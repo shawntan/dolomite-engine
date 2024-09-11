@@ -2,7 +2,7 @@ from transformers import AutoConfig, AutoTokenizer, GenerationConfig
 
 from ...utils import SafeTensorsWeightsManager, download_repo
 from ..enums import AttentionHeadType
-from ..models import GPTDolomiteConfig
+from ..models import SBDolomiteConfig
 from .llama import _export_state_dict_to_huggingface, _import_state_dict_from_huggingface
 
 
@@ -36,7 +36,7 @@ def import_from_huggingface_granite(pretrained_model_name_or_path: str, save_pat
         tokenizer.save_pretrained(save_path, legacy_format=False)
 
 
-def _import_config_from_huggingface(original_config: GraniteConfig) -> GPTDolomiteConfig:
+def _import_config_from_huggingface(original_config: GraniteConfig) -> SBDolomiteConfig:
     assert original_config.hidden_act == "silu"
 
     if original_config.num_attention_heads == original_config.num_key_value_heads:
@@ -48,7 +48,7 @@ def _import_config_from_huggingface(original_config: GraniteConfig) -> GPTDolomi
 
     assert original_config.mlp_bias == original_config.attention_bias
 
-    config = GPTDolomiteConfig(
+    config = SBDolomiteConfig(
         vocab_size=original_config.vocab_size,
         n_positions=original_config.max_position_embeddings,
         n_embd=original_config.hidden_size,
@@ -81,7 +81,7 @@ def _import_config_from_huggingface(original_config: GraniteConfig) -> GPTDolomi
 
 
 def export_to_huggingface_granite(pretrained_model_name_or_path: str, save_path: str) -> None:
-    config: GPTDolomiteConfig = AutoConfig.from_pretrained(pretrained_model_name_or_path)
+    config: SBDolomiteConfig = AutoConfig.from_pretrained(pretrained_model_name_or_path)
     original_config = _export_config_to_huggingface(config)
 
     safetensors_weights_manager = SafeTensorsWeightsManager(pretrained_model_name_or_path)
@@ -107,7 +107,7 @@ def export_to_huggingface_granite(pretrained_model_name_or_path: str, save_path:
         pass
 
 
-def _export_config_to_huggingface(config: GPTDolomiteConfig) -> GraniteConfig:
+def _export_config_to_huggingface(config: SBDolomiteConfig) -> GraniteConfig:
     assert config.activation_function == "swiglu"
     assert config.normalization_function == "rmsnorm"
     assert config.position_embedding_type == "rope"

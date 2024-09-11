@@ -1,10 +1,10 @@
 import torch
 from transformers import AutoModelForCausalLM
 
-from dolomite_engine.hf_models import GPTDolomiteConfig
+from dolomite_engine.hf_models import SBDolomiteConfig
 
 
-config = GPTDolomiteConfig(
+config = SBDolomiteConfig(
     vocab_size=65024,
     n_positions=4096,
     n_embd=8192,

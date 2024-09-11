@@ -7,10 +7,7 @@ from .models import (
     GPTCrossLayerConfig,
     GPTCrossLayerForCausalLM,
     GPTCrossLayerModel,
-    GPTDolomiteConfig,
-    GPTDolomiteForCausalLM,
     GPTDolomiteForCausalLM_TP,
-    GPTDolomiteModel,
     GPTDolomiteModel_TP,
     MoEDolomiteConfig,
     MoEDolomiteForCausalLM,
@@ -18,6 +15,9 @@ from .models import (
     RNNDolomiteConfig,
     RNNDolomiteForCausalLM,
     RNNDolomiteModel,
+    SBDolomiteConfig,
+    SBDolomiteForCausalLM,
+    SBDolomiteModel,
     convert_gpt_dolomite_to_gpt_crosslayer,
 )
 from .register_hf import (

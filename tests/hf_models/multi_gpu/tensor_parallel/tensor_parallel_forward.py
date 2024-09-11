@@ -5,7 +5,7 @@ import torch
 import torch.distributed
 from transformers import set_seed
 
-from dolomite_engine.hf_models import AttentionHeadType, GPTDolomiteConfig, GPTDolomiteForCausalLM_TP
+from dolomite_engine.hf_models import AttentionHeadType, GPTDolomiteForCausalLM_TP, SBDolomiteConfig
 from dolomite_engine.utils import ProcessGroupManager, SafeTensorsWeightsManager, string_to_torch_dtype
 
 from ...test_common import TestCommons
@@ -32,7 +32,7 @@ num_key_value_heads = None
 if AttentionHeadType(args.attention_head_type) == AttentionHeadType.gqa:
     num_key_value_heads = 8
 
-config = GPTDolomiteConfig(
+config = SBDolomiteConfig(
     attention_head_type=args.attention_head_type,
     n_layer=1,
     position_embedding_type=args.position_embedding_type,

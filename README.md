@@ -73,10 +73,10 @@ export_to_huggingface(
 ```
 
 If you are interested in using this optimization outside this repo for some reason, you can do as follows:
+
 ```python
 import torch
-from dolomite_engine.hf_models import GPTDolomiteForCausalLM
-
+from dolomite_engine.hf_models import SBDolomiteForCausalLM
 
 # we need unpadded lists here for avoiding any useless computations on pad tokens
 # this is a bit different from the standard transformer which takes in tensors and an attention mask
@@ -86,10 +86,10 @@ labels = [[-100, -100, -100, 4, 5, 0], [-100, -100, 8, 0]]
 
 # this will throw a warning saying that the model is of gpt_bigcode class
 # ignore the warning
-model = GPTDolomiteForCausalLM.from_pretrained(
-    <model_path>,
-    attn_implementation="flash_attention_2"
-    use_padding_free_transformer=True,
+model = SBDolomiteForCausalLM.from_pretrained(
+        < model_path >,
+attn_implementation = "flash_attention_2"
+use_padding_free_transformer = True,
 ).cuda()
 
 loss = model(
