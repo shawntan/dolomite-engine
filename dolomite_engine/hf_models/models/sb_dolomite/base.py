@@ -163,9 +163,6 @@ class SBDolomiteModel(SBDolomitePreTrainedModel):
             normalization_implementation=self.normalization_implementation,
         )
 
-        self.position_embedding_type = PositionEmbeddingType(config.position_embedding_type)
-        self._setup_positional_encoding()
-
         # Initialize weights and apply final processing
         self.post_init()
 
@@ -358,9 +355,6 @@ class SBDolomiteModel(SBDolomitePreTrainedModel):
     ) -> torch.Tensor:
         if inputs_embeds is None:
             inputs_embeds = self.wte(input_ids)
-
-        if self.position_embedding_type == PositionEmbeddingType.learned_absolute:
-            inputs_embeds = inputs_embeds + self.wpe(position_ids)
 
         if token_type_ids is not None:
             inputs_embeds = inputs_embeds + self.wte(token_type_ids)
