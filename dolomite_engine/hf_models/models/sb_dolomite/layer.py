@@ -117,7 +117,7 @@ class PaddingFreeSBAttention(Attention):
             cu_row_blocks=cu_row_blocks,
             sequence_ids=sequence_ids,
         )
-        attn_output = attn_output + rem[..., None] * v_
+        # attn_output = attn_output + rem[..., None] * v_
         attn_output = attn_output.permute(1, 0, 2)
 
         # ==========================================================================================
