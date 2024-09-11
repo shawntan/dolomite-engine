@@ -9,7 +9,11 @@ MASTER_PORT=5${LSB_JOBID: -5:-1}
 NNODES=$(echo ${LSB_MCPU_HOSTS} | tr ' ' '\n' | sed 'n; d' | wc -w)
 GPUS_PER_NODE=$(echo $CUDA_VISIBLE_DEVICES | tr ',' '\n' | wc -w)
 NODE_RANK=$(($(echo ${LSB_MCPU_HOSTS} | tr ' ' '\n' | sed 'n; d' | grep -n -m1 $(echo $HOSTNAME | cut -d'.' -f1) | cut -d':' -f1)-1))
+
 export WANDB__SERVICE_WAIT=300
+export WANDB_BASE_URL=https://api.wandb.ai
+export WANDB_API_KEY=23b2b9e51a4ff39d1b3dcb9f993824f7c02f5500
+
 
 TOKENIZERS_PARALLELISM=false \
 	torchrun --nnodes=$NNODES \
