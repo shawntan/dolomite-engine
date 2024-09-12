@@ -4,19 +4,20 @@ import torch
 import torch.nn as nn
 from transformers import DynamicCache
 
-from ...config import CommonConfig
 from ...enums import AttentionHeadType, InitMethod, PositionEmbeddingType
 from ...modeling_utils import get_attention_module, get_normalization_function
 from ...modeling_utils.attention import Attention
 from ...modeling_utils.linear import ParameterizedLinear
+from ..gpt_dolomite.layer import GPTDolomiteBlock
 from ..gpt_dolomite.mlp import MLP
 from .config import SBDolomiteConfig
 from .sb_varlen import sb_attn_varlen_, sb_flash_attn_varlen
 
 
 class PaddingFreeSBAttention(Attention):
-    def __init__(self, config: CommonConfig, causal: bool, layer_idx: int | None = None) -> None:
+    def __init__(self, config: SBDolomiteConfig, causal: bool, layer_idx: int | None = None) -> None:
         super().__init__(config, causal, layer_idx)
+        self.sb_remainder = config.sb_remainder
         if config.add_qkv_bias:
             init_method = InitMethod(config.init_method)
             initializer_range = config.initializer_range
@@ -117,7 +118,8 @@ class PaddingFreeSBAttention(Attention):
             cu_row_blocks=cu_row_blocks,
             sequence_ids=sequence_ids,
         )
-        # attn_output = attn_output + rem[..., None] * v_
+        if self.sb_remainder:
+            attn_output = attn_output + rem[..., None] * v_
         attn_output = attn_output.permute(1, 0, 2)
 
         # ==========================================================================================
@@ -175,7 +177,7 @@ class PaddingFreeSBAttention(Attention):
         return query, key, value
 
 
-class SBDolomiteBlock(nn.Module):
+class SBDolomiteBlock(GPTDolomiteBlock):
     """
     Layer implementation for the transformer block
     """
@@ -188,7 +190,7 @@ class SBDolomiteBlock(nn.Module):
         use_padding_free_transformer: bool,
         layer_idx: int | None = None,
     ) -> None:
-        super().__init__()
+        nn.Module.__init__(self)
 
         hidden_size = config.hidden_size
         self.inner_dim = config.n_inner

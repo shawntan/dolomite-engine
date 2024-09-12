@@ -7,8 +7,9 @@ class SBDolomiteConfig(GPTDolomiteConfig):
     def __init__(
         self,
         add_qkv_bias: bool = False,
+        sb_remainder: bool = True,
         **kwargs,
     ) -> None:
         super().__init__(**kwargs)
-
+        self.sb_remainder = sb_remainder
         self.add_qkv_bias = add_qkv_bias
