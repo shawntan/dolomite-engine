@@ -2,6 +2,7 @@ import math
 
 import torch
 import torch.nn as nn
+from torch.nn import functional as F
 from transformers import DynamicCache
 
 from ...enums import AttentionHeadType, InitMethod, PositionEmbeddingType
@@ -14,7 +15,24 @@ from .config import SBDolomiteConfig
 from .sb_varlen import sb_attn_varlen_, sb_flash_attn_varlen
 
 
-class PaddingFreeSBAttention(Attention):
+def decoding_stickbreaking(q, k, v, scale=None):
+    """
+    Stick-breaking attention weights.
+    """
+    if scale is None:
+        scale = 1 / math.sqrt(q.shape[-1])
+    logits = q @ k[..., :-1, :].transpose(-1, -2) * scale
+    original_dtype = logits.dtype
+    logits = logits.float()
+    log_z = F.logsigmoid(logits).to(original_dtype)
+    log_beta = F.logsigmoid(-logits).to(original_dtype)
+    re_cum_log_beta = log_beta.sum(dim=-1, keepdim=True) - log_beta.cumsum(dim=-1)
+    log_att = log_z + re_cum_log_beta
+    att = log_att.exp()
+    return att @ v[..., :-1, :], 1 - att.sum(dim=-1)
+
+
+class SBAttention(Attention):
     def __init__(self, config: SBDolomiteConfig, causal: bool, layer_idx: int | None = None) -> None:
         super().__init__(config, causal, layer_idx)
         self.sb_remainder = config.sb_remainder
@@ -31,6 +49,48 @@ class PaddingFreeSBAttention(Attention):
                 bias=True,
                 std=std,
             )
+
+    def forward(
+        self,
+        hidden_states: torch.Tensor,
+        past_key_values: DynamicCache | None = None,
+        attention_mask: torch.Tensor | None = None,
+        rope_cos_sin: torch.Tensor | None = None,
+        cu_seqlens: torch.Tensor | None = None,
+        max_seqlen: torch.Tensor | None = None,
+        sb_metadata=None,
+    ) -> torch.Tensor:
+        assert past_key_values is not None
+        query, key, value = self._prepare_qkv_for_forward(hidden_states)
+        bsz, length, heads, dim = query.size()
+        softmax_scale = self._get_softmax_scale()
+        self.attn_pdrop if self.training else 0
+        key, value = past_key_values.update(key, value, self.layer_idx)
+        v_ = value.permute(0, 2, 1, 3)
+        attn_output, rem = decoding_stickbreaking(
+            q=query.permute(0, 2, 1, 3), k=key.permute(0, 2, 1, 3), v=v_, scale=softmax_scale
+        )
+        if self.sb_remainder:
+            attn_output = attn_output + rem[..., None] * v_
+        attn_output = attn_output.permute(0, 2, 1, 3)
+
+        # ==========================================================================================
+        # attn_output -> (total_q, num_heads, head_dim)
+        # ==========================================================================================
+
+        attn_output = attn_output.view(bsz, length, self.hidden_size)
+
+        # ==========================================================================================
+        # attn_output -> (total_q, num_heads * head_dim)
+        # ==========================================================================================
+
+        attn_output = self.c_proj(attn_output)
+        attn_output = self.resid_dropout(attn_output)
+
+        return attn_output
+
+
+class PaddingFreeSBAttention(SBAttention):
 
     def forward(
         self,
@@ -68,44 +128,7 @@ class PaddingFreeSBAttention(Attention):
 
         softmax_scale = self._get_softmax_scale()
         self.attn_pdrop if self.training else 0
-        # attn_output = flash_attn_varlen_func(
-        #     query,
-        #     key,
-        #     value,
-        #     cu_seqlens_q=cu_seqlens,
-        #     cu_seqlens_k=cu_seqlens,
-        #     max_seqlen_q=max_seqlen,
-        #     max_seqlen_k=max_seqlen,
-        #     dropout_p=dropout_p,
-        #     softmax_scale=softmax_scale,
-        #     causal=self.causal,
-        # )
 
-        # attn_output, rem = sb_flash_attn_varlen(
-        #     q=query.permute(1, 0, 2).contiguous(),
-        #     k=key.permute(1, 0, 2).contiguous(),
-        #     v=v_.contiguous(),
-        #     cu_seqlens=torch.tensor([query.size(0)], dtype=torch.int32, device=query.device),
-        #     inv_temp=softmax_scale,
-        #     zero_start=False,
-        # )
-        # attn_output = attn_output + rem[..., None] * v_
-        # attn_output = attn_output.permute(1, 0, 2).contiguous()
-        """
-        v_ = value.permute(1, 0, 2)
-        cu_row_blocks_, first_row_block_, sequence_ids_ = sb_metadata
-        attn_output, rem, sb_metadata_ = sb_flash_attn_varlen(
-            q=query.permute(1, 0, 2),
-            k=key.permute(1, 0, 2),
-            v=v_,
-            cu_seqlens=cu_seqlens,
-           inv_temp=softmax_scale,
-        )
-        cu_row_blocks, first_row_block, sequence_ids = sb_metadata_
-        assert (cu_row_blocks_ == cu_row_blocks).all(), "cu_row_blocks don't match"
-        assert (first_row_block_ == first_row_block).all(), "first_row_block don't match"
-        assert (sequence_ids == sequence_ids_).all(), "sequence_idsdon't match"
-        """
         cu_row_blocks, first_row_block, sequence_ids = sb_metadata
         v_ = value.permute(1, 0, 2)
         attn_output, rem = sb_attn_varlen_(
@@ -205,12 +228,14 @@ class SBDolomiteBlock(GPTDolomiteBlock):
             normalization_implementation=normalization_implementation,
         )
 
-        assert use_padding_free_transformer
-
         # self.attn = get_attention_module(
         #     config, True, attention_implementation, use_padding_free_transformer, layer_idx
         # )
-        self.attn = PaddingFreeSBAttention(config, causal=True, layer_idx=layer_idx)
+        if use_padding_free_transformer:
+            self.attn = PaddingFreeSBAttention(config, causal=True, layer_idx=layer_idx)
+        else:
+            self.attn = SBAttention(config, causal=True, layer_idx=layer_idx)
+
         self.ln_2 = get_normalization_function(
             config.normalization_function,
             hidden_size,
