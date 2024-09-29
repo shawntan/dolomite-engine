@@ -10,8 +10,8 @@ log2 = math.log(2)
 inv_log2: tl.constexpr = 1 / log2
 ALLOW_TF32: tl.constexpr = False
 DEBUG: tl.constexpr = False
-BLOCK_M = 128
-BLOCK_N = 128
+BLOCK_M = 64
+BLOCK_N = 64
 
 
 @torch.jit.script
