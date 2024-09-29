@@ -103,7 +103,8 @@ class SBAttention(Attention):
             return attn_output, rem
 
         if query.size(2) == key.size(2):
-            if q_.numel() < 2**32:
+            if True or q_.numel() < 2**32:
+
                 attn_output, rem = sb_attn(q_, k_, v_)
             else:
                 attn_output_list = []
@@ -315,19 +316,32 @@ class SBDolomiteBlock(GPTDolomiteBlock):
         )
 
         if self.m_residual is not None:
-            attn_output = attn_output * self.m_residual
+            if self.training:
+                attn_output = attn_output * self.m_residual
+            else:
+                attn_output.mul_(self.m_residual)
 
         # residual connection
-        hidden_states = attn_output + residual
-        residual = hidden_states
+        if self.training:
+            hidden_states = attn_output + residual
+            residual = hidden_states
+        else:
+            hidden_states = residual.add_(attn_output)
+
         hidden_states = self.ln_2(hidden_states)
 
         feed_forward_hidden_states = self.mlp(hidden_states)
 
         if self.m_residual is not None:
-            feed_forward_hidden_states = feed_forward_hidden_states * self.m_residual
+            if self.training:
+                feed_forward_hidden_states = feed_forward_hidden_states * self.m_residual
+            else:
+                feed_forward_hidden_states.mul_(self.m_residual)
 
         # residual connection
-        hidden_states = residual + feed_forward_hidden_states
+        if self.training:
+            hidden_states = residual + feed_forward_hidden_states
+        else:
+            hidden_states = residual.add_(feed_forward_hidden_states)
 
         return hidden_states

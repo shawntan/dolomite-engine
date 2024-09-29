@@ -15,6 +15,7 @@ from .models import (
     RNNDolomiteConfig,
     RNNDolomiteForCausalLM,
     RNNDolomiteModel,
+    SBDolomiteForCausalLM,
     convert_gpt_dolomite_to_gpt_crosslayer,
 )
 from .register_hf import (

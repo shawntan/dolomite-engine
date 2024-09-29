@@ -1,3 +1,4 @@
+import gc
 import math
 
 import torch
@@ -9,8 +10,8 @@ log2 = math.log(2)
 inv_log2: tl.constexpr = 1 / log2
 ALLOW_TF32: tl.constexpr = False
 DEBUG: tl.constexpr = False
-BLOCK_M = 64
-BLOCK_N = 64
+BLOCK_M = 128
+BLOCK_N = 128
 
 
 @torch.jit.script
@@ -54,6 +55,7 @@ def compute_attn_weights(
     return neg_log, p
 
 
+# @triton.autotune(configs=[triton.Config({}, num_stages=4, num_warps=4)], key=['batch_size', 'token_size'],)
 @triton.jit
 def _forward(
     Q_ptr,
@@ -213,7 +215,7 @@ def compute_block(
 
 
 def sb_fwd(q, k, v, cu_seqlens, batch_ids, cu_row_blocks, logit_scale=None):
-    with torch.device(torch.cuda.current_device()):
+    with torch.device(q.device):
         num_heads = q.size(0)
         batch_size = cu_seqlens.size(0)
         token_size = q.size(1)
@@ -222,7 +224,7 @@ def sb_fwd(q, k, v, cu_seqlens, batch_ids, cu_row_blocks, logit_scale=None):
         if logit_scale is None:
             logit_scale = 1 / math.sqrt(dim_size)
         o = torch.zeros_like(q)
-        rem = torch.zeros_like(q[:, :, 0])
+        rem = torch.zeros_like(q[:, :, 0], device=q.device)
         M = torch.zeros((num_heads, cu_row_blocks[-1], BLOCK_M), device=q.device, dtype=q.dtype)
         M_count = triton.cdiv(token_size, BLOCK_M)
         # N_count = triton.cdiv(token_size, BLOCK_N)
@@ -688,6 +690,11 @@ class StickBreakingAttention(torch.autograd.Function):
     def forward(ctx, q, k, v, cu_seqlens, cu_row_blocks, first_row_block, sequence_ids, inv_temp):
         logit_scale = inv_temp
         o, rem, M = sb_fwd(q, k, v, cu_seqlens, sequence_ids, cu_row_blocks, logit_scale=inv_temp)
+        if not ctx.needs_input_grad[0]:
+            # del M
+            M = None
+            # gc.collect()
+            # torch.cuda.empty_cache()
         ctx.save_for_backward(q, k, v, M, cu_seqlens, sequence_ids, cu_row_blocks, first_row_block)
         ctx.logit_scale = logit_scale
         return o, rem

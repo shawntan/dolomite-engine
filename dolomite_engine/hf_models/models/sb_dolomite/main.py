@@ -154,7 +154,10 @@ class SBDolomiteForCausalLM(SBDolomitePreTrainedModel, GPTDolomiteForCausalLM):
         lm_logits = self.get_lm_logits(hidden_states)
 
         if self.m_width is not None:
-            lm_logits = lm_logits / self.m_width
+            if self.training:
+                lm_logits = lm_logits / self.m_width
+            else:
+                lm_logits.div_(self.m_width)
 
         loss = self.get_autoregressive_language_modeling_loss(lm_logits, labels, cu_seqlens)
 
@@ -172,7 +175,7 @@ class SBDolomiteForCausalLM(SBDolomitePreTrainedModel, GPTDolomiteForCausalLM):
 
     def get_lm_logits(self, hidden_states: torch.Tensor) -> torch.Tensor:
         return (
-            F.linear(hidden_states, self.transformer.wte.weight)
+            F.linear(hidden_states, self.transformer.wte.weight.to(device=hidden_states.device))
             if self._tied_word_embeddings
             else self.lm_head(hidden_states)
         )
