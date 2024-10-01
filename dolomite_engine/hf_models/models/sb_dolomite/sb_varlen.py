@@ -14,7 +14,7 @@ BLOCK_M = 64
 BLOCK_N = 64
 
 
-@torch.jit.script
+@torch.compile
 def row_block_counts_and_sequence_ids(cu_seqlens: torch.Tensor, BLOCK_M: int, BLOCK_N: int):
     total_length = cu_seqlens[-1]
     M_COUNT = (total_length - 1) // BLOCK_M + 1
@@ -29,11 +29,9 @@ def row_block_counts_and_sequence_ids(cu_seqlens: torch.Tensor, BLOCK_M: int, BL
 
 
 @triton.jit
-def softplus(x, DEBUG: tl.constexpr = DEBUG):
-    if DEBUG:
-        return x
-    else:
-        return tl.where(x < 15, tl.math.log2(1 + tl.math.exp2(x)), x)
+def softplus(x):
+    out = tl.where(x < 15, tl.math.log2(1 + tl.math.exp2(x)), x)
+    return out
 
 
 @triton.jit
@@ -93,6 +91,8 @@ def _forward(
     BLOCK_D: tl.constexpr,
     ALLOW_TF32: tl.constexpr = ALLOW_TF32,
     inv_log2: tl.constexpr = inv_log2,
+    no_grad: tl.constexpr = False,
+    MIN_LOG_ACC: tl.constexpr = -1.0,
 ):
 
     head_id = tl.program_id(0)
@@ -138,37 +138,41 @@ def _forward(
     iters = last_N_block_id - first_N_block_id  # tl.cdiv(tl.max(end_m - start_idxs), BLOCK_N)
     min_start_idxs = tl.min(start_idxs)
     is_same_start = min_start_idxs == tl.max(start_idxs)
-
+    needs_compute = True  # tl.max(neg_log_acc) > MIN_LOG_ACC
     for i in range(iters):
         N_blk_idxs -= BLOCK_N
         K_blk_ptrs -= BLOCK_N * stride_kn
         V_blk_ptrs -= BLOCK_N * stride_vn
         M_blk_ptrs -= stride_mi
+        if needs_compute:
+            needs_compute = True  # tl.max(neg_log_acc) > MIN_LOG_ACC
 
-        on_band = i < BLOCK_M // BLOCK_N
-        is_last_block = i == (iters - 1)
-        on_N_edge = on_band and i == 0
-        neg_log, p, _, v = compute_block(
-            q,
-            neg_log_acc,
-            min_start_idxs,
-            start_idxs,
-            token_size,
-            cm,
-            qk_scale,
-            K_blk_ptrs,
-            V_blk_ptrs,
-            M_blk_idxs,
-            N_blk_idxs,
-            is_last_block,
-            is_same_start,
-            on_N_edge,
-            on_band,
-        )
-        # Store intermediate values
-        tl.store(M_blk_ptrs, neg_log_acc)
-        neg_log_acc += tl.sum(neg_log, axis=1)
-        acc = tl.dot(p.to(v.dtype), v, acc, allow_tf32=ALLOW_TF32)
+        if needs_compute:
+            on_band = i < BLOCK_M // BLOCK_N
+            is_last_block = i == (iters - 1)
+            on_N_edge = on_band and i == 0
+            neg_log, p, _, v = compute_block(
+                q,
+                neg_log_acc,
+                min_start_idxs,
+                start_idxs,
+                token_size,
+                cm,
+                qk_scale,
+                K_blk_ptrs,
+                V_blk_ptrs,
+                M_blk_idxs,
+                N_blk_idxs,
+                is_last_block,
+                is_same_start,
+                on_N_edge,
+                on_band,
+            )
+            # Store intermediate values
+            if not no_grad:
+                tl.store(M_blk_ptrs, neg_log_acc)
+            neg_log_acc += tl.sum(neg_log, axis=1)
+            acc = tl.dot(p.to(v.dtype), v, acc, allow_tf32=ALLOW_TF32)
 
     tl.store(O_blk_ptrs, acc.to(O_ptr.type.element_ty), mask=M_mask[:, None])
     tl.store(R_blk_ptrs, tl.math.exp2(neg_log_acc), mask=M_mask)
@@ -214,7 +218,7 @@ def compute_block(
     return neg_log, p, k, v
 
 
-def sb_fwd(q, k, v, cu_seqlens, batch_ids, cu_row_blocks, logit_scale=None):
+def sb_fwd(q, k, v, cu_seqlens, batch_ids, cu_row_blocks, logit_scale=None, no_grad=False):
     with torch.device(q.device):
         num_heads = q.size(0)
         batch_size = cu_seqlens.size(0)
@@ -225,7 +229,10 @@ def sb_fwd(q, k, v, cu_seqlens, batch_ids, cu_row_blocks, logit_scale=None):
             logit_scale = 1 / math.sqrt(dim_size)
         o = torch.zeros_like(q)
         rem = torch.zeros_like(q[:, :, 0], device=q.device)
-        M = torch.zeros((num_heads, cu_row_blocks[-1], BLOCK_M), device=q.device, dtype=q.dtype)
+        if no_grad:
+            M = torch.zeros((1, 1, 1), device=q.device, dtype=q.dtype)
+        else:
+            M = torch.zeros((num_heads, cu_row_blocks[-1], BLOCK_M), device=q.device, dtype=q.dtype)
         M_count = triton.cdiv(token_size, BLOCK_M)
         # N_count = triton.cdiv(token_size, BLOCK_N)
         grid = (num_heads, M_count)
@@ -262,6 +269,7 @@ def sb_fwd(q, k, v, cu_seqlens, batch_ids, cu_row_blocks, logit_scale=None):
             logit_scale=logit_scale,
             batch_size=batch_size,
             token_size=token_size,
+            no_grad=no_grad,
             BLOCK_M=BLOCK_M,
             BLOCK_N=BLOCK_N,
             BLOCK_D=BLOCK_D,
@@ -685,12 +693,26 @@ def sb_bwd(do, dr, q, k, v, cu_seqlens, M, sequence_ids, cu_row_blocks, first_ro
         return dq, dk, dv
 
 
+"""
+| Tasks  |Version|Filter|n-shot|    Metric     |   | Value |   |Stderr|
+|--------|------:|------|-----:|---------------|---|------:|---|------|
+|pile_10k|      1|none  |     0|bits_per_byte  |↓  | 0.7010|±  |   N/A|
+|        |       |none  |     0|byte_perplexity|↓  | 1.6256|±  |   N/A|
+|        |       |none  |     0|word_perplexity|↓  |25.9136|±  |   N/A|
+|--------|------:|------|-----:|---------------|---|------:|---|------|
+|pile_10k|      1|none  |     0|bits_per_byte  |↓  | 0.7010|±  |   N/A|
+|        |       |none  |     0|byte_perplexity|↓  | 1.6256|±  |   N/A|
+|        |       |none  |     0|word_perplexity|↓  |25.9136|±  |   N/A|
+"""
+
+
 class StickBreakingAttention(torch.autograd.Function):
     @staticmethod
     def forward(ctx, q, k, v, cu_seqlens, cu_row_blocks, first_row_block, sequence_ids, inv_temp):
+        no_grad = not ctx.needs_input_grad[0]
         logit_scale = inv_temp
-        o, rem, M = sb_fwd(q, k, v, cu_seqlens, sequence_ids, cu_row_blocks, logit_scale=inv_temp)
-        if not ctx.needs_input_grad[0]:
+        o, rem, M = sb_fwd(q, k, v, cu_seqlens, sequence_ids, cu_row_blocks, logit_scale=inv_temp, no_grad=no_grad)
+        if no_grad:
             # del M
             M = None
             # gc.collect()
