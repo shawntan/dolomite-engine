@@ -239,11 +239,11 @@ class ScatterMoE_TP(ScatterMoE, DTensorModule):
             )
         else:
             if self.sequence_parallel:
-                hidden_states = all_gather_from_sequence_parallel_region(
-                    hidden_states, dim=0 if self.use_padding_free_transformer else 1
+                router_logits = all_gather_from_sequence_parallel_region(
+                    router_logits, dim=0 if self.use_padding_free_transformer else 1
                 )
             else:
-                hidden_states = copy_to_tensor_parallel_region(hidden_states)
+                router_logits = copy_to_tensor_parallel_region(router_logits)
 
         # router_logits -> (total_q, num_experts)
 
