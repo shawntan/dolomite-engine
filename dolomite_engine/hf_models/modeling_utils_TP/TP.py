@@ -42,6 +42,7 @@ def tensor_parallel_split_safetensor_slice(slice, dim: int, start_end: tuple[int
     return output
 
 
+@torch.compile
 def tensor_to_dtensor(
     tensor: torch.Tensor,
     device_mesh: DeviceMesh,
@@ -63,6 +64,7 @@ def tensor_to_dtensor(
     return dtensor
 
 
+@torch.compile
 def dtensor_to_tensor(
     dtensor: DTensor,
     device_mesh: DeviceMesh | None = None,
