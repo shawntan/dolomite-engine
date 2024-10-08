@@ -58,7 +58,7 @@ def tensor_to_dtensor(
         if isinstance(desired_placement, Placement):
             desired_placement = [desired_placement]
 
-        dtensor = dtensor.redistribute(device_mesh=device_mesh, placements=desired_placement, async_op=True)
+        dtensor = dtensor.redistribute(device_mesh=device_mesh, placements=desired_placement, async_op=False)
 
     return dtensor
 
@@ -75,7 +75,7 @@ def dtensor_to_tensor(
 
         assert device_mesh is not None
 
-        dtensor = dtensor.redistribute(device_mesh=device_mesh, placements=desired_placement, async_op=True)
+        dtensor = dtensor.redistribute(device_mesh=device_mesh, placements=desired_placement, async_op=False)
 
     if grad_placement is not None and isinstance(grad_placement, Placement):
         grad_placement = [grad_placement]
@@ -118,22 +118,28 @@ def _tensor_parallel_all_reduce(x: torch.Tensor) -> torch.Tensor:
     if ProcessGroupManager.get_tensor_parallel_world_size() == 1:
         return x
 
-    return funcol.all_reduce(x, reduceOp="sum", group=ProcessGroupManager.get_tensor_parallel_group())
+    return funcol.wait_tensor(
+        funcol.all_reduce(x, reduceOp="sum", group=ProcessGroupManager.get_tensor_parallel_group())
+    )
 
 
 def _tensor_parallel_all_gather(x: torch.Tensor, dim: int) -> torch.Tensor:
     if ProcessGroupManager.get_tensor_parallel_world_size() == 1:
         return x
 
-    return funcol.all_gather_tensor(x, gather_dim=dim, group=ProcessGroupManager.get_tensor_parallel_group())
+    return funcol.wait_tensor(
+        funcol.all_gather_tensor(x, gather_dim=dim, group=ProcessGroupManager.get_tensor_parallel_group())
+    )
 
 
 def _tensor_parallel_reduce_scatter(x: torch.Tensor, dim: int) -> torch.Tensor:
     if ProcessGroupManager.get_tensor_parallel_world_size() == 1:
         return x
 
-    return funcol.reduce_scatter_tensor(
-        x, reduceOp="sum", scatter_dim=dim, group=ProcessGroupManager.get_tensor_parallel_group()
+    return funcol.wait_tensor(
+        funcol.reduce_scatter_tensor(
+            x, reduceOp="sum", scatter_dim=dim, group=ProcessGroupManager.get_tensor_parallel_group()
+        )
     )
 
 

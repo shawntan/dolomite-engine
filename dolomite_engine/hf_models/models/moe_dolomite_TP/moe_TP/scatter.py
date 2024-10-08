@@ -7,10 +7,19 @@ import torch.nn.functional as F
 from torch.distributed._tensor.api import DTensor
 from torch.distributed._tensor.placement_types import Partial, Replicate, Shard
 
-from .....utils import ProcessGroupManager, is_kernel_hyperdrive_available
+from .....utils import ProcessGroupManager, is_dtensors_enabled, is_kernel_hyperdrive_available
 from ....enums import InitMethod
 from ....modeling_utils import ParameterizedTransposedLinear, get_activation_function, is_glu
-from ....modeling_utils_TP import Dropout_TP, DTensorModule, dtensor_to_tensor, tensor_to_dtensor
+from ....modeling_utils_TP import (
+    Dropout_TP,
+    DTensorModule,
+    all_gather_from_sequence_parallel_region,
+    copy_to_tensor_parallel_region,
+    dtensor_to_tensor,
+    reduce_from_tensor_parallel_region,
+    reduce_scatter_to_sequence_parallel_region,
+    tensor_to_dtensor,
+)
 from ....utils import divide_if_divisible
 from ...moe_dolomite import MoEDolomiteConfig
 from ...moe_dolomite.moe import ScatterMoE
@@ -40,6 +49,13 @@ class ReplicatedTransposedLinear_TP(ParameterizedTransposedLinear, DTensorModule
                 self.weight, device_mesh=ProcessGroupManager.get_tensor_parallel_mesh(), placements=[Replicate()]
             )
         )
+
+    def forward(self, input: torch.Tensor) -> torch.Tensor:
+        weight = self.weight
+        if not is_dtensors_enabled():
+            weight = weight.to_local()
+
+        return input @ weight
 
 
 class ColumnParallelScatteredExperts(ParameterizedScatteredExperts, DTensorModule):
@@ -93,16 +109,16 @@ class ColumnParallelScatteredExperts(ParameterizedScatteredExperts, DTensorModul
         grouped_out: bool = False,
     ) -> torch.Tensor:
         return scattered_experts(
-            input,
-            self.weight.to_local().permute(1, 2, 0),
-            k,
-            sorted_expert_idxs,
-            sorted_scattered_idxs,
-            padded_block_idxs,
-            expert_offsets,
-            gates,
-            grouped_in,
-            grouped_out,
+            inputs=input,
+            expert_weights=self.weight.to_local().permute(1, 2, 0),
+            k=k,
+            sorted_expert_idxs=sorted_expert_idxs,
+            sorted_scattered_idxs=sorted_scattered_idxs,
+            padded_block_idxs=padded_block_idxs,
+            expert_offsets=expert_offsets,
+            gates=gates,
+            grouped_in=grouped_in,
+            grouped_out=grouped_out,
         )
 
 
@@ -159,6 +175,7 @@ class ScatterMoE_TP(ScatterMoE, DTensorModule):
         self.num_experts = config.num_experts
         self.top_k = config.num_experts_per_tok
         self.use_padding_free_transformer = use_padding_free_transformer
+        self.sequence_parallel = sequence_parallel
         self.layer_idx = layer_idx
 
         self.hidden_size = config.hidden_size
@@ -215,9 +232,19 @@ class ScatterMoE_TP(ScatterMoE, DTensorModule):
     def _compute_routing_weights(self, hidden_states: torch.Tensor) -> tuple[torch.Tensor]:
         # hidden_states -> (total_q, hidden_size)
         router_logits = self.gate(hidden_states)
-        router_logits = dtensor_to_tensor(
-            router_logits, device_mesh=self.tp_mesh, desired_placement=Replicate(), grad_placement=Partial()
-        )
+
+        if is_dtensors_enabled():
+            router_logits = dtensor_to_tensor(
+                router_logits, device_mesh=self.tp_mesh, desired_placement=Replicate(), grad_placement=Partial()
+            )
+        else:
+            if self.sequence_parallel:
+                hidden_states = all_gather_from_sequence_parallel_region(
+                    hidden_states, dim=0 if self.use_padding_free_transformer else 1
+                )
+            else:
+                hidden_states = copy_to_tensor_parallel_region(hidden_states)
+
         # router_logits -> (total_q, num_experts)
 
         router_weights, selected_experts = self._get_topk(router_logits)
@@ -234,20 +261,44 @@ class ScatterMoE_TP(ScatterMoE, DTensorModule):
 
         hidden_states = hidden_states.view(-1, self.hidden_size)
 
-        hidden_states = tensor_to_dtensor(hidden_states, device_mesh=self.tp_mesh, current_placement=self.placement)
+        use_dtensors = is_dtensors_enabled()
+
+        if use_dtensors:
+            hidden_states = tensor_to_dtensor(
+                hidden_states, device_mesh=self.tp_mesh, current_placement=self.placement
+            )
 
         router_logits, router_weights, selected_experts = self._compute_routing_weights(hidden_states)
 
-        hidden_states = dtensor_to_tensor(
-            hidden_states, device_mesh=self.tp_mesh, desired_placement=Replicate(), grad_placement=Partial()
-        )
+        if use_dtensors:
+            hidden_states = dtensor_to_tensor(
+                hidden_states, device_mesh=self.tp_mesh, desired_placement=Replicate(), grad_placement=Partial()
+            )
+        else:
+            if self.sequence_parallel:
+                hidden_states = all_gather_from_sequence_parallel_region(
+                    hidden_states, dim=0 if self.use_padding_free_transformer else 1
+                )
+            else:
+                hidden_states = copy_to_tensor_parallel_region(hidden_states)
 
         hidden_states = self._compute_experts(hidden_states, router_weights, selected_experts)
 
-        hidden_states = tensor_to_dtensor(hidden_states, device_mesh=self.tp_mesh, current_placement=Partial())
-        hidden_states = dtensor_to_tensor(
-            hidden_states, device_mesh=self.tp_mesh, desired_placement=self.placement, grad_placement=self.placement
-        )
+        if use_dtensors:
+            hidden_states = tensor_to_dtensor(hidden_states, device_mesh=self.tp_mesh, current_placement=Partial())
+            hidden_states = dtensor_to_tensor(
+                hidden_states,
+                device_mesh=self.tp_mesh,
+                desired_placement=self.placement,
+                grad_placement=self.placement,
+            )
+        else:
+            if self.sequence_parallel:
+                hidden_states = reduce_scatter_to_sequence_parallel_region(
+                    hidden_states, dim=0 if self.use_padding_free_transformer else 1
+                )
+            else:
+                hidden_states = reduce_from_tensor_parallel_region(hidden_states)
 
         if not self.use_padding_free_transformer:
             hidden_states = hidden_states.reshape(batch_size, sequence_length, self.hidden_size)
