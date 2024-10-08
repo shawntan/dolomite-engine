@@ -17,12 +17,12 @@ def block_checkpointing(
     block_idx = 0
 
     def _whether_to_checkpoint(submodule: nn.Module) -> bool:
-        if num_blocks is None:
-            return True
-
         nonlocal block_idx
 
         if isinstance(submodule, block_class):
+            if num_blocks is None:
+                return True
+
             block_idx += 1
             if block_idx <= num_blocks == 0:
                 return True
