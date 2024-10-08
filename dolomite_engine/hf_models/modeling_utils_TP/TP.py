@@ -42,7 +42,6 @@ def tensor_parallel_split_safetensor_slice(slice, dim: int, start_end: tuple[int
     return output
 
 
-@torch.compile
 def tensor_to_dtensor(
     tensor: torch.Tensor,
     device_mesh: DeviceMesh,
@@ -59,12 +58,11 @@ def tensor_to_dtensor(
         if isinstance(desired_placement, Placement):
             desired_placement = [desired_placement]
 
-        dtensor = dtensor.redistribute(device_mesh=device_mesh, placements=desired_placement)
+        dtensor = dtensor.redistribute(device_mesh=device_mesh, placements=desired_placement, async_op=True)
 
     return dtensor
 
 
-@torch.compile
 def dtensor_to_tensor(
     dtensor: DTensor,
     device_mesh: DeviceMesh | None = None,
@@ -77,7 +75,7 @@ def dtensor_to_tensor(
 
         assert device_mesh is not None
 
-        dtensor = dtensor.redistribute(device_mesh=device_mesh, placements=desired_placement)
+        dtensor = dtensor.redistribute(device_mesh=device_mesh, placements=desired_placement, async_op=True)
 
     if grad_placement is not None and isinstance(grad_placement, Placement):
         grad_placement = [grad_placement]
