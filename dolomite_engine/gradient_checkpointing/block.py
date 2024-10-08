@@ -24,7 +24,7 @@ def block_checkpointing(
                 return True
 
             block_idx += 1
-            if block_idx <= num_blocks == 0:
+            if block_idx <= num_blocks:
                 return True
         return False
 
