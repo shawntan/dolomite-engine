@@ -102,7 +102,6 @@ class ColumnParallelScatteredExperts(ParameterizedScatteredExperts, DTensorModul
         k: int,
         sorted_expert_idxs: torch.Tensor,
         sorted_scattered_idxs: torch.Tensor,
-        padded_block_idxs: torch.Tensor,
         expert_offsets: torch.Tensor,
         gates: torch.Tensor | None = None,
         grouped_in: bool = False,
@@ -114,7 +113,6 @@ class ColumnParallelScatteredExperts(ParameterizedScatteredExperts, DTensorModul
             k=k,
             sorted_expert_idxs=sorted_expert_idxs,
             sorted_scattered_idxs=sorted_scattered_idxs,
-            padded_block_idxs=padded_block_idxs,
             expert_offsets=expert_offsets,
             gates=gates,
             grouped_in=grouped_in,
@@ -256,6 +254,7 @@ class ScatterMoE_TP(ScatterMoE, DTensorModule):
         return router_logits, router_weights, selected_experts
 
     def forward(self, hidden_states: torch.Tensor) -> tuple[torch.Tensor]:
+
         if not self.use_padding_free_transformer:
             batch_size, sequence_length, _ = hidden_states.shape
 
@@ -282,6 +281,8 @@ class ScatterMoE_TP(ScatterMoE, DTensorModule):
             else:
                 hidden_states = copy_to_tensor_parallel_region(hidden_states)
 
+        # torch.cuda.synchronize()
+        # hidden_states = Printer.apply(hidden_states, self.layer_idx)
         hidden_states = self._compute_experts(hidden_states, router_weights, selected_experts)
 
         if use_dtensors:
@@ -310,3 +311,16 @@ class ScatterMoE_TP(ScatterMoE, DTensorModule):
         )
 
         return hidden_states, router_logits, aux_loss
+
+
+class Printer(torch.autograd.Function):
+    @staticmethod
+    def forward(ctx, x, i):
+        ctx.i = i
+        print("Printer F", i)
+        return x
+
+    @staticmethod
+    def backward(ctx, g):
+        print("Printer B", ctx.i)
+        return g, None
