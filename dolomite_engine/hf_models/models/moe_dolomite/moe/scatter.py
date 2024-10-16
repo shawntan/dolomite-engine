@@ -11,7 +11,7 @@ from .base import ParameterizedExperts, SparseMoE
 
 
 if is_kernel_hyperdrive_available():
-    from khd.kernels.scattermoe.triton_implementation import padded_block_indices, scattered_experts
+    from khd.kernels.scattermoe.triton_implementation import expert_boundaries, scattered_experts
 
 
 class ParameterizedScatteredExperts(ParameterizedExperts):

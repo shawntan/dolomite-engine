@@ -14,7 +14,6 @@ BLOCK_M = 64
 BLOCK_N = 64
 
 
-@torch.compile
 def row_block_counts_and_sequence_ids(cu_seqlens: torch.Tensor, BLOCK_M: int, BLOCK_N: int):
     total_length = cu_seqlens[-1]
     M_COUNT = (total_length - 1) // BLOCK_M + 1
@@ -219,7 +218,7 @@ def compute_block(
 
 
 def sb_fwd(q, k, v, cu_seqlens, batch_ids, cu_row_blocks, logit_scale=None, no_grad=False):
-    with torch.device(q.device):
+    with torch.cuda.device(q.device):
         num_heads = q.size(0)
         batch_size = cu_seqlens.size(0)
         token_size = q.size(1)
@@ -567,7 +566,7 @@ def _backward_dkdv(
 
 
 def sb_bwd(do, dr, q, k, v, cu_seqlens, M, sequence_ids, cu_row_blocks, first_row_block, logit_scale=None):
-    with torch.device(q.device):
+    with torch.cuda.device(q.device):
         batch_size = cu_seqlens.size(0)
         num_heads = q.size(0)
         token_size = q.size(1)
