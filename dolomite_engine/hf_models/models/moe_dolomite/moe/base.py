@@ -62,7 +62,7 @@ class ParameterizedExperts(nn.Module):
             self.bias.zero_()
 
 
-class SparseMoE(nn.Module):
+class Experts(nn.Module):
     def __init__(
         self, config: MoEDolomiteConfig, use_padding_free_transformer: bool, layer_idx: int | None = None
     ) -> None:
@@ -82,17 +82,6 @@ class SparseMoE(nn.Module):
         m_width = config.m_width
         n_layer = config.n_layer
         init_method = InitMethod(config.init_method)
-        residual_dropout = config.resid_pdrop
-
-        std = initializer_range
-        if init_method == InitMethod.mup:
-            std /= math.sqrt(m_width)
-        self.gate = ParameterizedTransposedLinear(
-            in_features=self.hidden_size,
-            out_features=config.num_experts,
-            bias=False,
-            std=std,
-        )
 
         std = initializer_range
         if init_method == InitMethod.mup:
@@ -118,42 +107,7 @@ class SparseMoE(nn.Module):
             std=std,
         )
 
-        self.dropout = nn.Identity() if residual_dropout == 0 else nn.Dropout(residual_dropout)
-
-    def forward(self, hidden_states: torch.Tensor) -> torch.Tensor:
-        if not self.use_padding_free_transformer:
-            batch_size, sequence_length, _ = hidden_states.shape
-
-        hidden_states = hidden_states.view(-1, self.hidden_size)
-
-        router_logits, router_weights, selected_experts = self._compute_routing_weights(hidden_states)
-        hidden_states = self._compute_experts(hidden_states, router_weights, selected_experts)
-
-        if not self.use_padding_free_transformer:
-            hidden_states = hidden_states.reshape(batch_size, sequence_length, self.hidden_size)
-
-        hidden_states = self.dropout(hidden_states)
-
-        aux_loss = self._compute_switch_loss(
-            logits=router_logits, probs=torch.softmax(router_logits, dim=-1), topk_idxs=selected_experts
-        )
-
-        return hidden_states, router_logits, aux_loss
-
-    def _compute_routing_weights(self, hidden_states: torch.Tensor) -> tuple[torch.Tensor]:
-        # hidden_states -> (total_q, hidden_size)
-        router_logits = self.gate(hidden_states)
-        # router_logits -> (total_q, num_experts)
-
-        router_weights, selected_experts = self._get_topk(router_logits)
-        router_weights = F.softmax(router_weights.float(), dim=-1)
-
-        # we cast back to the input dtype
-        router_weights = router_weights.type_as(hidden_states)
-
-        return router_logits, router_weights, selected_experts
-
-    def _compute_experts(
+    def forward(
         self, hidden_states: torch.Tensor, router_weights: torch.Tensor, selected_experts: torch.Tensor
     ) -> torch.Tensor:
         total_q = hidden_states.shape[0]
@@ -162,9 +116,9 @@ class SparseMoE(nn.Module):
             router_weights, selected_experts
         )
 
-        expert_inputs = hidden_states[batch_index]
+        hidden_states = hidden_states[batch_index]
 
-        hidden_states = self.c_fc(expert_inputs, num_experts_per_token)
+        hidden_states = self.c_fc(hidden_states, num_experts_per_token)
         hidden_states = self.act(hidden_states)
         hidden_states = self.c_proj(hidden_states, num_experts_per_token)
 
@@ -190,6 +144,71 @@ class SparseMoE(nn.Module):
         batch_gates = router_weights[index_sorted_experts]  # [num_tokens * top_k]
 
         return batch_index, batch_gates, num_experts_per_token
+
+
+class MoEMLP(nn.Module):
+    def __init__(
+        self, config: MoEDolomiteConfig, use_padding_free_transformer: bool, layer_idx: int | None = None
+    ) -> None:
+        super().__init__()
+
+        self.num_experts = config.num_experts
+        self.top_k = config.num_experts_per_tok
+        self.use_padding_free_transformer = use_padding_free_transformer
+        self.layer_idx = layer_idx
+
+        self.hidden_size = config.hidden_size
+
+        initializer_range = config.initializer_range
+        m_width = config.m_width
+        init_method = InitMethod(config.init_method)
+        residual_dropout = config.resid_pdrop
+
+        std = initializer_range
+        if init_method == InitMethod.mup:
+            std /= math.sqrt(m_width)
+        self.gate = ParameterizedTransposedLinear(
+            in_features=self.hidden_size,
+            out_features=config.num_experts,
+            bias=False,
+            std=std,
+        )
+
+        self.experts = Experts(config, use_padding_free_transformer=use_padding_free_transformer, layer_idx=layer_idx)
+        self.dropout = nn.Identity() if residual_dropout == 0 else nn.Dropout(residual_dropout)
+
+    def forward(self, hidden_states: torch.Tensor) -> torch.Tensor:
+        if not self.use_padding_free_transformer:
+            batch_size, sequence_length, _ = hidden_states.shape
+
+        hidden_states = hidden_states.view(-1, self.hidden_size)
+
+        router_logits, router_weights, selected_experts = self._compute_routing_weights(hidden_states)
+        hidden_states = self.experts(hidden_states, router_weights, selected_experts)
+
+        if not self.use_padding_free_transformer:
+            hidden_states = hidden_states.reshape(batch_size, sequence_length, self.hidden_size)
+
+        hidden_states = self.dropout(hidden_states)
+
+        aux_loss = self._compute_switch_loss(
+            logits=router_logits, probs=torch.softmax(router_logits, dim=-1), topk_idxs=selected_experts
+        )
+
+        return hidden_states, router_logits, aux_loss
+
+    def _compute_routing_weights(self, hidden_states: torch.Tensor) -> tuple[torch.Tensor]:
+        # hidden_states -> (total_q, hidden_size)
+        router_logits = self.gate(hidden_states)
+        # router_logits -> (total_q, num_experts)
+
+        router_weights, selected_experts = self._get_topk(router_logits)
+        router_weights = F.softmax(router_weights.float(), dim=-1)
+
+        # we cast back to the input dtype
+        router_weights = router_weights.type_as(hidden_states)
+
+        return router_logits, router_weights, selected_experts
 
     def _get_topk(self, x: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
         if self.top_k == 1:
