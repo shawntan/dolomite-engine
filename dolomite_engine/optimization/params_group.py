@@ -12,7 +12,7 @@ from ..hf_models import (
 )
 from ..hf_models.modeling_utils import Attention
 from ..hf_models.models.gpt_dolomite.layer import MLP
-from ..hf_models.models.moe_dolomite.moe import MoEMLP
+from ..hf_models.models import MoEMLP
 from ..hf_models.models.rnn_dolomite.attention import DeltaNet
 from ..model_wrapper import ModelWrapper
 from ..utils import log_rank_0
