@@ -8,7 +8,7 @@ from ...enums import AttentionHeadType
 from ...modeling_utils import get_attention_module, get_normalization_function
 from ..gpt_dolomite.mlp import MLP
 from .config import MoEDolomiteConfig
-from moe import MoEMLP
+from .moe import MoEMLP
 
 
 class SparseMoEBlock(nn.Module):
