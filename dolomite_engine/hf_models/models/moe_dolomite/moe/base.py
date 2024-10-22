@@ -4,7 +4,8 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from . import get_moe
+
+from .utils import get_moe
 from ....enums import InitMethod
 from ....modeling_utils import ParameterizedTransposedLinear, get_activation_function, is_glu
 from ..config import MoEDolomiteConfig
