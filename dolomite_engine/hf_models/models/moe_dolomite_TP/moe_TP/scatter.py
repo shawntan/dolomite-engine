@@ -13,7 +13,7 @@ from ....modeling_utils import ParameterizedTransposedLinear, get_activation_fun
 from ....modeling_utils_TP import Dropout_TP, DTensorModule, dtensor_to_tensor, tensor_to_dtensor
 from ....utils import divide_if_divisible
 from ...moe_dolomite import MoEDolomiteConfig
-from ...moe_dolomite.moe import ScatterMoE
+from ...moe_dolomite.moe import ScatterExperts
 from ...moe_dolomite.moe.scatter import ParameterizedScatteredExperts
 
 
@@ -144,7 +144,7 @@ class RowParallelScatteredExperts(ColumnParallelScatteredExperts):
         )
 
 
-class ScatterMoE_TP(ScatterMoE, DTensorModule):
+class ScatterMoE_TP(ScatterExperts, DTensorModule):
     def __init__(
         self,
         config: MoEDolomiteConfig,

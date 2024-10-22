@@ -7,7 +7,7 @@ from .....utils import is_kernel_hyperdrive_available
 from ....enums import InitMethod
 from ....modeling_utils import ParameterizedTransposedLinear, get_activation_function, is_glu
 from ..config import MoEDolomiteConfig
-from .base import ParameterizedExperts, SparseMoE
+from .base import ParameterizedExperts, Experts
 
 
 if is_kernel_hyperdrive_available():
@@ -55,7 +55,7 @@ class ParameterizedScatteredExperts(ParameterizedExperts):
         )
 
 
-class ScatterMoE(SparseMoE):
+class ScatterExperts(Experts):
     def __init__(
         self, config: MoEDolomiteConfig, use_padding_free_transformer: bool, layer_idx: int | None = None
     ) -> None:
