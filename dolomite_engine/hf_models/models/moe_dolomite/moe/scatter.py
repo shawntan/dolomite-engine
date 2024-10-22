@@ -75,17 +75,6 @@ class ScatterExperts(Experts):
         m_width = config.m_width
         n_layer = config.n_layer
         init_method = InitMethod(config.init_method)
-        residual_dropout = config.resid_pdrop
-
-        std = initializer_range
-        if init_method == InitMethod.mup:
-            std /= math.sqrt(m_width)
-        self.gate = ParameterizedTransposedLinear(
-            in_features=self.hidden_size,
-            out_features=config.num_experts,
-            bias=False,
-            std=std,
-        )
 
         std = initializer_range
         if init_method == InitMethod.mup:
@@ -111,9 +100,8 @@ class ScatterExperts(Experts):
             std=std,
         )
 
-        self.dropout = nn.Identity() if residual_dropout == 0 else nn.Dropout(residual_dropout)
 
-    def _compute_experts(
+    def forward(
         self, hidden_states: torch.Tensor, router_weights: torch.Tensor, selected_experts: torch.Tensor
     ) -> torch.Tensor:
         with torch.no_grad():

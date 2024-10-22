@@ -4,6 +4,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
+from . import get_moe
 from ....enums import InitMethod
 from ....modeling_utils import ParameterizedTransposedLinear, get_activation_function, is_glu
 from ..config import MoEDolomiteConfig
@@ -148,7 +149,8 @@ class Experts(nn.Module):
 
 class MoEMLP(nn.Module):
     def __init__(
-        self, config: MoEDolomiteConfig, use_padding_free_transformer: bool, layer_idx: int | None = None
+        self, config: MoEDolomiteConfig, moe_implementation: str, 
+        use_padding_free_transformer: bool, layer_idx: int | None = None
     ) -> None:
         super().__init__()
 
@@ -174,7 +176,14 @@ class MoEMLP(nn.Module):
             std=std,
         )
 
-        self.experts = Experts(config, use_padding_free_transformer=use_padding_free_transformer, layer_idx=layer_idx)
+        self.experts = get_moe(
+            config,
+            moe_implementation=moe_implementation,
+            use_padding_free_transformer=use_padding_free_transformer,
+            layer_idx=layer_idx,
+        )
+
+        
         self.dropout = nn.Identity() if residual_dropout == 0 else nn.Dropout(residual_dropout)
 
     def forward(self, hidden_states: torch.Tensor) -> torch.Tensor:
