@@ -1,3 +1,5 @@
+
+
 from dolomite_engine.hf_models.enums import InitMethod
 from dolomite_engine.hf_models.modeling_utils import ParameterizedTransposedLinear
 from dolomite_engine.hf_models.models.moe_dolomite.config import MoEDolomiteConfig
@@ -10,6 +12,12 @@ import torch.nn.functional as F
 
 
 import math
+
+from ..config import MoEDolomiteConfig
+from .base import Experts
+from .scatter import ScatterExperts
+
+
 
 
 class MoEMLP(nn.Module):
