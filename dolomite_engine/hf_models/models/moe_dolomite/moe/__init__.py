@@ -1,9 +1,10 @@
 from ..config import MoEDolomiteConfig
 from .base import SparseMoE
 from .scatter import ScatterMoE
+from .virouter import VarMoE
 
 
-_MOE_MODULES = {"eager": SparseMoE, "scattermoe": ScatterMoE}
+_MOE_MODULES = {"eager": SparseMoE, "scattermoe": ScatterMoE, "varouter": VarMoE}
 
 
 def get_moe(

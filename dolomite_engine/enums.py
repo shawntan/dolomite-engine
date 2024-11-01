@@ -34,6 +34,7 @@ class MoEImplementation(Enum):
 
     eager = "eager"
     scattermoe = "scattermoe"
+    varouter = "varouter"
 
 
 class DatasetSplit(str, Enum):
