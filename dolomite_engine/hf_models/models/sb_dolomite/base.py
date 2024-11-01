@@ -6,7 +6,7 @@ from transformers.modeling_outputs import BaseModelOutputWithPast
 from ...defaults import DEFAULT_NORMALIZATION_IMPLEMENTATION
 from ...enums import AttentionHeadType, PositionEmbeddingType
 from ...modeling_utils import Alibi, ParameterizedEmbedding, RoPE, YaRNScaledRoPE, get_normalization_function
-from ...utils import convert_padding_free_lists_to_tensors, divide_if_divisible
+from ...utils import convert_padding_free_lists_to_tensors
 from ..gpt_dolomite.base import GPTDolomitePreTrainedModel
 from . import sb_varlen
 from .config import SBDolomiteConfig
