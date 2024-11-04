@@ -1,10 +1,11 @@
 from ..config import MoEDolomiteConfig
+from .auxfree import AuxFreeMoE
 from .base import SparseMoE
 from .scatter import ScatterMoE
 from .virouter import VarMoE
 
 
-_MOE_MODULES = {"eager": SparseMoE, "scattermoe": ScatterMoE, "varouter": VarMoE}
+_MOE_MODULES = {"eager": SparseMoE, "scattermoe": ScatterMoE, "varouter": VarMoE, "auxfree": AuxFreeMoE}
 
 
 def get_moe(
