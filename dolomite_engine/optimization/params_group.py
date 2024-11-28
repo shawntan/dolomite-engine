@@ -121,14 +121,6 @@ def get_mup_group_with_names(model: ModelWrapper, optimizer_class_args: dict) ->
     trainable_parameters_or_param_groups = []
     names = {}
 
-<<<<<<< HEAD
-    names = {
-        "normal": list(normal_params.keys()),
-        "no_weight_decay": list(no_weight_decay_params.keys()),
-        "mup": list(mup_params.keys()),
-    }
-    log_rank_0(logging.INFO, names)
-=======
     if len(normal_params) > 0:
         trainable_parameters_or_param_groups.append({"params": list(normal_params.values())})
         names["normal"] = list(normal_params.keys())
@@ -143,7 +135,6 @@ def get_mup_group_with_names(model: ModelWrapper, optimizer_class_args: dict) ->
         )
         names["mup"] = list(mup_params.keys())
 
->>>>>>> ee7ed18 (Pipeline parallel (#40))
     return trainable_parameters_or_param_groups, names
 
 

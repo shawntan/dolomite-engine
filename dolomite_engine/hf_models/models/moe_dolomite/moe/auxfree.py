@@ -39,11 +39,14 @@ class AuxFreeMoE(ScatterMoE):
     def _compute_switch_loss(self, logits: Tensor, probs: Tensor, topk_idxs: Tensor) -> Tensor:
         num_experts = logits.size(-1)
         freq = torch.bincount(topk_idxs.flatten(), minlength=num_experts).to(dtype=logits.dtype)
+
         if ProcessGroupManager.is_initialized() and ProcessGroupManager.get_data_parallel_world_size() > 1:
             freq = all_reduce(freq, reduceOp="sum", group=ProcessGroupManager.get_data_parallel_group())
         avg_counts = torch.mean(freq, dim=0, keepdim=True)
-        self.bias[:] = self.bias + self.step_size * torch.sign(avg_counts - freq)
+
+        if self.training:
+            self.bias[:] = self.bias + self.step_size * torch.sign(avg_counts - freq)
         with torch.no_grad():
             acc_probs = probs.sum(0)
-            switch_loss = num_experts * (F.normalize(acc_probs, p=2, dim=0) * F.normalize(freq, p=2, dim=0)).sum()
+            switch_loss = num_experts * (F.normalize(acc_probs, p=1, dim=0) * F.normalize(freq, p=1, dim=0)).sum()
         return switch_loss.detach()
