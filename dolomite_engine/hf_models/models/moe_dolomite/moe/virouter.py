@@ -71,13 +71,7 @@ class VarMoE(ScatterMoE):
             assert self.use_padding_free_transformer
             p_mean = self.gate(hidden_states)
             q_params_ = self.q_gate(hidden_states[1:].detach())
-            q_params = (
-                torch.cat(
-                    (q_params_, torch.cat((self._log_p_std[None, :] * 0.0, self._log_p_std[None, :] * 0.0), dim=1)),
-                    dim=0,
-                )
-                * 0.02
-            )
+            q_params = F.pad(q_params_, (0, 0, 0, 1)) * 0.04
             q_mean_, q_log_std_ = q_params.chunk(2, dim=-1)
 
             q_mean = p_mean + q_mean_

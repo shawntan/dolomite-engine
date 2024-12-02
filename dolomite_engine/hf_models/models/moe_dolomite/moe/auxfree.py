@@ -17,7 +17,7 @@ class AuxFreeMoE(ScatterMoE):
     ) -> None:
         super().__init__(config, use_padding_free_transformer, layer_idx)
         self.register_buffer("bias", torch.zeros(config.num_experts))
-        self.step_size = 2e-3
+        self.step_size = config.router_aux_loss_coef
 
     def _compute_routing_weights(self, hidden_states: torch.Tensor) -> tuple[torch.Tensor]:
         # hidden_states -> (total_q, hidden_size)
@@ -44,7 +44,7 @@ class AuxFreeMoE(ScatterMoE):
             freq = all_reduce(freq, reduceOp="sum", group=ProcessGroupManager.get_data_parallel_group())
         avg_counts = torch.mean(freq, dim=0, keepdim=True)
 
-        if self.training:
+        if self.training and self.step_size > 0:
             self.bias[:] = self.bias + self.step_size * torch.sign(avg_counts - freq)
         with torch.no_grad():
             acc_probs = probs.sum(0)
