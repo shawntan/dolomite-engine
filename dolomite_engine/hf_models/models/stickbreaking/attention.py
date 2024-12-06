@@ -8,7 +8,7 @@ from transformers import DynamicCache
 from ...enums import InitMethod
 from ...modeling_utils import Attention, ParameterizedLinear
 from .config import StickBreakingConfig
-from .sb_varlen import sb_attn_varlen_, sb_flash_attn_varlen
+from .sb_varlen import sb_attn_varlen
 
 
 @torch.compile
@@ -139,17 +139,18 @@ class PaddingFreeSBAttention(SBAttention):
         softmax_scale = self._get_softmax_scale()
         self.attn_pdrop if self.training else 0
 
-        cu_row_blocks, first_row_block, sequence_ids = sb_metadata
+        # cu_row_blocks, first_row_block, sequence_ids = sb_metadata
         value = value.permute(1, 0, 2)
-        attn_output, rem = sb_attn_varlen_(
+        attn_output, rem = sb_attn_varlen(
             q=query.permute(1, 0, 2),
             k=key.permute(1, 0, 2),
             v=value,
             inv_temp=softmax_scale,
             cu_seqlens=cu_seqlens[1:],
-            first_row_block=first_row_block,
-            cu_row_blocks=cu_row_blocks,
-            sequence_ids=sequence_ids,
+            zero_start=False
+            # first_row_block=first_row_block,
+            # cu_row_blocks=cu_row_blocks,
+            # sequence_ids=sequence_ids,
         )
         if self.sb_remainder:
             attn_output = attn_output + rem[..., None] * value
