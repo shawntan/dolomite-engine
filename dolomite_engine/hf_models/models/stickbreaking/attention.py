@@ -10,8 +10,8 @@ from ...enums import InitMethod
 from ...modeling_utils import Attention, ParameterizedLinear
 from .config import StickBreakingConfig
 
-# from stickbreaking_attention.sb_naive_varlen import sb_attn_varlen
-from .stickbreaking_attention import sb_attn, sb_attn_varlen
+from stickbreaking_attention.sb_naive_varlen import sb_attn_varlen
+# from .stickbreaking_attention import sb_attn, sb_attn_varlen
 
 
 # torch._dynamo.config.cache_size_limit = 16
@@ -66,6 +66,9 @@ class SBAttention(Attention):
                 bias=True,
                 std=std,
             )
+
+        self.forget_gate = ParameterizedLinear(self.hidden_size, 1)
+        torch.nn.init.zeros_(self.forget_gate.weight)
 
     def forward(
         self,
@@ -128,14 +131,16 @@ class PaddingFreeSBAttention(SBAttention):
         assert past_key_values is None
 
         query, key, value = self._prepare_qkv_for_forward(hidden_states)
-
         softmax_scale = self._get_softmax_scale()
 
+        log_forget = F.logsigmoid(softmax_scale * self.forget_gate(hidden_states))
+        log_forget = log_forget.permute(1, 0).expand(self.num_key_value_heads, -1)
         value = value.permute(1, 0, 2)
         attn_output, rem = sb_attn_varlen(
             q=query.permute(1, 0, 2),
             k=key.permute(1, 0, 2),
             v=value,
+            log_forget=log_forget.permute(1, 0),
             inv_temp=softmax_scale,
             cu_seqlens=cu_seqlens,
             max_seqlens=max_seqlen,
