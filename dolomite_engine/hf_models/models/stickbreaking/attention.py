@@ -10,7 +10,8 @@ from ...enums import InitMethod
 from ...modeling_utils import Attention, ParameterizedLinear
 from .config import StickBreakingConfig
 
-from stickbreaking_attention.sb_naive_varlen import sb_attn_varlen
+from stickbreaking_attention import sb_attn, sb_attn_varlen
+from stickbreaking_attention.sb_naive_varlen import sb_attn_varlen as sb_attn_varlen_forget
 # from .stickbreaking_attention import sb_attn, sb_attn_varlen
 
 
@@ -67,8 +68,12 @@ class SBAttention(Attention):
                 std=std,
             )
 
-        self.forget_gate = ParameterizedLinear(self.hidden_size, 1)
-        torch.nn.init.zeros_(self.forget_gate.weight)
+        self.has_forget_gate = config.forget_gate
+        if config.forget_gate:
+            self.forget_gate = ParameterizedLinear(self.hidden_size, 1)
+            torch.nn.init.zeros_(self.forget_gate.weight)
+
+        self.norm = torch.nn.GroupNorm(self.num_heads, self.hidden_size)
 
     def forward(
         self,
@@ -80,6 +85,9 @@ class SBAttention(Attention):
         max_seqlen: torch.Tensor | None = None,
         sb_metadata=None,
     ) -> torch.Tensor:
+        if self.has_forget_gate:
+            raise NotImplementedError()
+
         query, key, value = self._prepare_qkv_for_forward(hidden_states)
         softmax_scale = self._get_softmax_scale()
         self.attn_pdrop if self.training else 0
@@ -105,8 +113,9 @@ class SBAttention(Attention):
         # ==========================================================================================
         # attn_output -> (total_q, num_heads, head_dim)
         # ==========================================================================================
+        attn_output = attn_output.view(bsz_ * length_, self.hidden_size)
+        attn_output = self.norm(attn_output)
         attn_output = attn_output.view(bsz_, length_, self.hidden_size)
-
         # ==========================================================================================
         # attn_output -> (total_q, num_heads * head_dim)
         # ==========================================================================================
@@ -132,28 +141,37 @@ class PaddingFreeSBAttention(SBAttention):
 
         query, key, value = self._prepare_qkv_for_forward(hidden_states)
         softmax_scale = self._get_softmax_scale()
-
-        log_forget = F.logsigmoid(softmax_scale * self.forget_gate(hidden_states))
-        log_forget = log_forget.permute(1, 0).expand(self.num_key_value_heads, -1)
         value = value.permute(1, 0, 2)
-        attn_output, rem = sb_attn_varlen(
-            q=query.permute(1, 0, 2),
-            k=key.permute(1, 0, 2),
-            v=value,
-            log_forget=log_forget.permute(1, 0),
-            inv_temp=softmax_scale,
-            cu_seqlens=cu_seqlens,
-            max_seqlens=max_seqlen,
-        )
+
+        if self.has_forget_gate:
+            log_forget = F.logsigmoid(softmax_scale * self.forget_gate(hidden_states))
+            log_forget = log_forget.permute(1, 0).expand(self.num_key_value_heads, -1)
+            attn_output, rem = sb_attn_varlen_forget(
+                q=query.permute(1, 0, 2),
+                k=key.permute(1, 0, 2),
+                v=value,
+                log_forget=log_forget.permute(1, 0),
+                inv_temp=softmax_scale,
+                cu_seqlens=cu_seqlens,
+                max_seqlens=max_seqlen,
+            )
+        else:
+            attn_output, rem = sb_attn_varlen(
+                q=query.permute(1, 0, 2),
+                k=key.permute(1, 0, 2),
+                v=value,
+                inv_temp=softmax_scale,
+                cu_seqlens=cu_seqlens,
+                max_seqlens=max_seqlen,
+            )
+
         if self.sb_remainder:
             attn_output = attn_output + rem[..., None] * self.head_bias[:, None, :]
         attn_output = attn_output.permute(1, 0, 2)
-
         attn_output = attn_output.view(-1, self.hidden_size)
-
+        attn_output = self.norm(attn_output)
         attn_output = self.c_proj(attn_output)
         attn_output = self.resid_dropout(attn_output)
-
         return attn_output
 
     def _prepare_qkv_for_forward_mha(
