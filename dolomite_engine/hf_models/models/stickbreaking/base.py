@@ -28,6 +28,7 @@ class StickBreakingModel(StickBreakingPreTrainedModel, BaseModelMixin):
         cu_seqlens: torch.Tensor | None = None,
         max_seqlen: torch.Tensor | None = None,
     ) -> BaseModelOutputWithPast:
+            
         (
             output_hidden_states,
             use_cache,

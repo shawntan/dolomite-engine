@@ -71,9 +71,8 @@ class SBAttention(Attention):
         self.has_forget_gate = config.forget_gate
         if config.forget_gate:
             self.forget_gate = ParameterizedLinear(self.hidden_size, 1)
-            torch.nn.init.zeros_(self.forget_gate.weight)
 
-        self.norm = torch.nn.GroupNorm(self.num_heads, self.hidden_size)
+        # self.norm = torch.nn.GroupNorm(self.num_heads, self.hidden_size)
 
     def forward(
         self,
@@ -113,8 +112,8 @@ class SBAttention(Attention):
         # ==========================================================================================
         # attn_output -> (total_q, num_heads, head_dim)
         # ==========================================================================================
-        attn_output = attn_output.view(bsz_ * length_, self.hidden_size)
-        attn_output = self.norm(attn_output)
+        # attn_output = attn_output.view(bsz_ * length_, self.hidden_size)
+        # attn_output = self.norm(attn_output)
         attn_output = attn_output.view(bsz_, length_, self.hidden_size)
         # ==========================================================================================
         # attn_output -> (total_q, num_heads * head_dim)
@@ -146,6 +145,11 @@ class PaddingFreeSBAttention(SBAttention):
         if self.has_forget_gate:
             log_forget = F.logsigmoid(softmax_scale * self.forget_gate(hidden_states))
             log_forget = log_forget.permute(1, 0).expand(self.num_key_value_heads, -1)
+            if False and not self.training:
+                from . import hinton
+                forget_gate = torch.sigmoid(log_forget.float())[0][:128]
+                hinton.plot(forget_gate.cpu().numpy(), max_val=1)
+
             attn_output, rem = sb_attn_varlen_forget(
                 q=query.permute(1, 0, 2),
                 k=key.permute(1, 0, 2),
@@ -169,7 +173,7 @@ class PaddingFreeSBAttention(SBAttention):
             attn_output = attn_output + rem[..., None] * self.head_bias[:, None, :]
         attn_output = attn_output.permute(1, 0, 2)
         attn_output = attn_output.view(-1, self.hidden_size)
-        attn_output = self.norm(attn_output)
+        # attn_output = self.norm(attn_output)
         attn_output = self.c_proj(attn_output)
         attn_output = self.resid_dropout(attn_output)
         return attn_output
