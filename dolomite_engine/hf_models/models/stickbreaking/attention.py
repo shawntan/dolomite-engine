@@ -51,9 +51,7 @@ def decoding_stickbreaking(q, k, v, scale=None):
 class SBAttention(Attention):
     def __init__(self, config: StickBreakingConfig, causal: bool, layer_idx: int | None = None) -> None:
         super().__init__(config, causal, layer_idx)
-        self.sb_remainder = config.sb_remainder
-        if self.sb_remainder:
-            self.head_bias = torch.nn.Parameter(torch.zeros(self.hidden_size // self.head_dim, self.head_dim))
+
         if config.add_qkv_bias:
             init_method = InitMethod(config.init_method)
             initializer_range = config.initializer_range
@@ -68,11 +66,18 @@ class SBAttention(Attention):
                 std=std,
             )
 
+        self.sb_remainder = config.sb_remainder
+        if self.sb_remainder:
+            self.head_bias = torch.nn.Parameter(torch.zeros(self.hidden_size // self.head_dim, self.head_dim))
+
         self.has_forget_gate = config.forget_gate
         if config.forget_gate:
-            self.forget_gate = ParameterizedLinear(self.hidden_size, 1)
+            self.forget_gate = ParameterizedLinear(self.hidden_size, 1, bias=False)
+            # torch.nn.init.zeros_(self.forget_gate.weight)
 
-        # self.norm = torch.nn.GroupNorm(self.num_heads, self.hidden_size)
+        self.has_head_norm = config.head_norm
+        if config.head_norm:
+            self.norm = torch.nn.GroupNorm(self.num_heads, self.hidden_size)
 
     def forward(
         self,
@@ -112,8 +117,9 @@ class SBAttention(Attention):
         # ==========================================================================================
         # attn_output -> (total_q, num_heads, head_dim)
         # ==========================================================================================
-        # attn_output = attn_output.view(bsz_ * length_, self.hidden_size)
-        # attn_output = self.norm(attn_output)
+        if self.has_head_norm:
+            attn_output = attn_output.view(bsz_ * length_, self.hidden_size)
+            attn_output = self.norm(attn_output)
         attn_output = attn_output.view(bsz_, length_, self.hidden_size)
         # ==========================================================================================
         # attn_output -> (total_q, num_heads * head_dim)
@@ -140,25 +146,45 @@ class PaddingFreeSBAttention(SBAttention):
 
         query, key, value = self._prepare_qkv_for_forward(hidden_states)
         softmax_scale = self._get_softmax_scale()
-        value = value.permute(1, 0, 2)
 
         if self.has_forget_gate:
-            log_forget = F.logsigmoid(softmax_scale * self.forget_gate(hidden_states))
+            log_forget = F.logsigmoid(self.forget_gate(hidden_states))
             log_forget = log_forget.permute(1, 0).expand(self.num_key_value_heads, -1)
-            if False and not self.training:
+            if True and not self.training:
                 from . import hinton
-                forget_gate = torch.sigmoid(log_forget.float())[0][:128]
-                hinton.plot(forget_gate.cpu().numpy(), max_val=1)
-
+                forget_gate = torch.exp(log_forget.float())[0]
+                print("min %0.3f | med %0.3f | max %0.3f |" % (
+                    forget_gate.min().item(),
+                    forget_gate.median().item(),
+                    forget_gate.max().item(),
+                ), end='')
+                hinton.plot(forget_gate.cpu().numpy()[-96:], max_val=1)
             attn_output, rem = sb_attn_varlen_forget(
                 q=query.permute(1, 0, 2),
                 k=key.permute(1, 0, 2),
-                v=value,
-                log_forget=log_forget.permute(1, 0),
+                v=value.permute(1, 0, 2),
+                log_forget=log_forget,
                 inv_temp=softmax_scale,
                 cu_seqlens=cu_seqlens,
                 max_seqlens=max_seqlen,
             )
+            # attn_output: torch.Tensor = attn_output
+            # if torch.isinf(attn_output).any() or torch.isnan(attn_output).any():
+            #     rank = torch.distributed.get_rank()
+            #     torch.save(
+            #         (
+            #             query.permute(1, 0, 2),
+            #             key.permute(1, 0, 2),
+            #             value,
+            #             softmax_scale,
+            #             log_forget,
+            #             cu_seqlens, max_seqlen
+            #         ),
+            #         open(f'naninfinput_{rank}.pkl', 'wb')
+            #     )
+            #     exit()
+
+
         else:
             attn_output, rem = sb_attn_varlen(
                 q=query.permute(1, 0, 2),
@@ -173,7 +199,8 @@ class PaddingFreeSBAttention(SBAttention):
             attn_output = attn_output + rem[..., None] * self.head_bias[:, None, :]
         attn_output = attn_output.permute(1, 0, 2)
         attn_output = attn_output.view(-1, self.hidden_size)
-        # attn_output = self.norm(attn_output)
+        if self.has_head_norm:
+            attn_output = self.norm(attn_output)
         attn_output = self.c_proj(attn_output)
         attn_output = self.resid_dropout(attn_output)
         return attn_output
