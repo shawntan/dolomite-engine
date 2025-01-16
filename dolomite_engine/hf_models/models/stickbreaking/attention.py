@@ -150,15 +150,26 @@ class PaddingFreeSBAttention(SBAttention):
         if self.has_forget_gate:
             log_forget = F.logsigmoid(self.forget_gate(hidden_states))
             log_forget = log_forget.permute(1, 0).expand(self.num_key_value_heads, -1)
-            if True and not self.training:
+
+            if False and not self.training:
+                mask = log_forget.exp() < 0.1
+                print(mask.float().mean())
+                log_forget = log_forget.masked_fill(mask, -100.)
+
+            if False and not self.training:
                 from . import hinton
                 forget_gate = torch.exp(log_forget.float())[0]
-                print("min %0.3f | med %0.3f | max %0.3f |" % (
-                    forget_gate.min().item(),
-                    forget_gate.median().item(),
-                    forget_gate.max().item(),
-                ), end='')
+                # print("len %04d | min %0.3f | med %0.3f | max %0.3f |" % (
+                #     forget_gate.size(0),
+                #     forget_gate.min().item(),
+                #     forget_gate.median().item(),
+                #     forget_gate.max().item(),
+                # ), end='')
+                hist, _ = torch.histogram(forget_gate.cpu(), bins=10, range=(0., 1.))
+                hinton.plot(hist.numpy(), style='bar', end='')
                 hinton.plot(forget_gate.cpu().numpy()[-96:], max_val=1)
+                # hinton.plot(forget_gate.cpu().numpy()[-64:], max_val=1, end='\n')
+
             attn_output, rem = sb_attn_varlen_forget(
                 q=query.permute(1, 0, 2),
                 k=key.permute(1, 0, 2),
@@ -189,7 +200,7 @@ class PaddingFreeSBAttention(SBAttention):
             attn_output, rem = sb_attn_varlen(
                 q=query.permute(1, 0, 2),
                 k=key.permute(1, 0, 2),
-                v=value,
+                v=value.permute(1, 0, 2),
                 inv_temp=softmax_scale,
                 cu_seqlens=cu_seqlens,
                 max_seqlens=max_seqlen,

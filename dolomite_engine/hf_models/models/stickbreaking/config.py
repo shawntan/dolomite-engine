@@ -9,7 +9,7 @@ class StickBreakingConfig(CommonConfig):
         add_qkv_bias: bool = False,
         sb_remainder: bool = True,
         forget_gate: bool = False,
-        head_norm: bool = True,
+        head_norm: bool = False,
         **kwargs,
     ) -> None:
         super().__init__(**kwargs)
