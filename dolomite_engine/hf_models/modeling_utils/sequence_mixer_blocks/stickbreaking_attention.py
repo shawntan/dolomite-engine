@@ -26,16 +26,21 @@ def decoding_stickbreaking(q, k, v, scale=None):
     original_dtype = q.dtype
     q = q.float()
     k = k.float()
+    # logits = torch.einsum('bhid,bhjd->bhij', q, k[..., :-1, :]) * scale
     logits = q @ k[..., :-1, :].transpose(-1, -2) * scale
+    # logits = logits.float()
     log_z = F.logsigmoid(logits).to(original_dtype)
     log_beta = F.logsigmoid(-logits).to(original_dtype)
+    # re_cum_log_beta = log_beta.sum(dim=-1, keepdim=True) - log_beta.cumsum(dim=-1)
     re_cum_log_beta = log_beta.flip(-1).cumsum(dim=-1).flip(-1) - log_beta
+    # re_cum_log_beta = log_beta.sum(dim=-1, keepdim=True) - log_beta.cumsum(dim=-1)
     log_att = log_z + re_cum_log_beta
-    att: torch.Tensor = log_att.exp()
-    v = v[..., :-1, :]
-    out = torch.einsum("bhij,bhjd->bhid", att, v)
+    # print("log_att", log_att[0, 0, 0, -20:])
+    att = log_att.exp()
+    #  print("att    ", att[0, 0, 0, -20:])
+    out = torch.einsum("bhij,bhjd->bhid", att, v[..., :-1, :])
+    # out = att @ v[..., :-1, :]
     return out, 1 - att.sum(dim=-1)
-
 
 class SBAttention(Attention):
     def __init__(
@@ -90,23 +95,48 @@ class SBAttention(Attention):
 
         query, key, value = self._prepare_qkv_for_forward(hidden_states)
         softmax_scale = self._get_softmax_scale()
-        # key, value = past_key_values.update(key, value, self.layer_idx)
+
+        if past_key_values is not None:
+            key, value = past_key_values.update(key, value, self.layer_idx)
+
         bsz_, _, length_, _ = query.size()
 
         if query.size(2) == key.size(2):
+            def attn_1(query, key, value, softmax_scale):
+                bsz, num_heads, length, h_dim = query.size()
+                query_ = query.flatten(0, 1).contiguous()
+                key_ = key.flatten(0, 1).contiguous()
+                value_ = value.flatten(0, 1).contiguous()
+                hidden_states_, rem_ = sb_attn_varlen(
+                    q=query_, k=key_, v=value_,
+                    inv_temp=softmax_scale,
+                    cu_seqlens=torch.tensor([0, length], device=torch.cuda.current_device()),
+                    max_seqlens=length,
+                )
+                assert hidden_states_.size(0) == bsz * num_heads, (hidden_states_.size(0), bsz, num_heads)
+                hidden_states = hidden_states_.view(bsz, num_heads, length, h_dim)
+                rem = rem_.view(bsz, num_heads, length)
+                return hidden_states, rem
+
+            hidden_states, rem = attn_1(query, key, value, softmax_scale)
+            """
             hidden_states, rem = sb_attn(
                 q=query,
                 k=key,
                 v=value,
                 inv_temp=softmax_scale,
             )
+            print(torch.abs(hidden_states_varlen - hidden_states).max())
+            print(torch.abs(rem - rem_varlen).max())
+            """
         else:
+
             hidden_states, rem = decoding_stickbreaking(q=query, k=key, v=value, scale=softmax_scale)
 
         hidden_states = hidden_states + rem[..., None] * self.head_bias[None, :, None, :]
 
         hidden_states = hidden_states.permute(0, 2, 1, 3)
-        hidden_states = hidden_states.view(bsz_ * length_, self.hidden_size)
+        hidden_states = hidden_states.reshape(bsz_ * length_, self.hidden_size)
         hidden_states = self.norm(hidden_states)
         hidden_states = hidden_states.view(bsz_, length_, self.hidden_size)
 

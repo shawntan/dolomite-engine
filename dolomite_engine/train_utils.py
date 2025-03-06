@@ -12,6 +12,8 @@ from .utils import ExperimentsTracker, MetricsTrackingDict, ProcessGroupManager,
 
 def all_reduce_metrics_tracker(metrics_tracker: MetricsTrackingDict) -> MetricsTrackingDict:
     tensor = [metrics_tracker[key] for key in metrics_tracker]
+    for i in range(len(tensor)):
+        tensor[i] = tensor[i].to(torch.cuda.current_device())
     tensor = torch.stack(tensor)
     # NOTE the cpu() call was to save memory but might not be needed anymore
     # tensor = torch.stack(tensor) / ProcessGroupManager.get_data_parallel_world_size()
@@ -92,7 +94,8 @@ def get_model_tflops(
         if sequence_mixer_type in ["softmax_attention", "stickbreaking_attention", "mamba2"]:
             attention_flops = 4 * b * s * h * (h * (1 + block.num_key_value_heads / n) + s)
         else:
-            raise NotImplementedError(f"unexpected sequence_mixer_type ({sequence_mixer_type})")
+            attention_flops = 4 * b * s * h * (h * (1/ n) + s)
+            # raise NotImplementedError(f"unexpected sequence_mixer_type ({sequence_mixer_type})")
 
         block = config.mlp_blocks[layer_idx]
 
