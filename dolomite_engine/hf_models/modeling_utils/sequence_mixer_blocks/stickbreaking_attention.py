@@ -100,8 +100,8 @@ class SBAttention(Attention):
             key, value = past_key_values.update(key, value, self.layer_idx)
 
         bsz_, _, length_, _ = query.size()
-
         if query.size(2) == key.size(2):
+            """
             def attn_1(query, key, value, softmax_scale):
                 bsz, num_heads, length, h_dim = query.size()
                 query_ = query.flatten(0, 1).contiguous()
@@ -126,9 +126,9 @@ class SBAttention(Attention):
                 v=value,
                 inv_temp=softmax_scale,
             )
-            print(torch.abs(hidden_states_varlen - hidden_states).max())
-            print(torch.abs(rem - rem_varlen).max())
-            """
+
+            # print(torch.abs(hidden_states_varlen - hidden_states).max())
+            # print(torch.abs(rem - rem_varlen).max())
         else:
 
             hidden_states, rem = decoding_stickbreaking(q=query, k=key, v=value, scale=softmax_scale)
@@ -159,8 +159,12 @@ class SBAttention(Attention):
         # this needs to be a reshape instead of view sadly
         query = query.reshape(batch_size, query_length, -1, self.head_dim)
 
-        key = key.repeat(1, 1, self.num_heads // self.num_key_value_heads, 1)
-        value = value.repeat(1, 1, self.num_heads // self.num_key_value_heads, 1)
+        # key = key.repeat(1, 1, self.num_heads // self.num_key_value_heads, 1)
+        # value = value.repeat(1, 1, self.num_heads // self.num_key_value_heads, 1)
+        group_size = self.num_heads // self.num_key_value_heads
+        key = key.repeat_interleave(repeats=group_size, dim=2)
+        value = value.repeat_interleave(repeats=group_size, dim=2)
+
 
         query = query.transpose(1, 2)
         key = key.transpose(1, 2)

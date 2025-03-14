@@ -81,7 +81,7 @@ def get_mup_group_with_names(model: ModelWrapper, optimizer_class_args: dict) ->
 
     assert (
         model.config.init_method == "mup"
-    ), "both init method for model and params group method for optimizer should be set to mup"
+    ), "both init method = %s for model and params group method for optimizer should be set to mup" %  model.config.init_method
 
     if model.has_teacher_model():
         log_rank_0(logging.WARN, "found a teacher model in the ModelWrapper")

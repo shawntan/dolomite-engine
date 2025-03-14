@@ -91,11 +91,12 @@ def get_model_tflops(
         sequence_mixer_type = block.sequence_mixer_type
 
         # FIXME fix FLOPs computation for Mamba2
-        if sequence_mixer_type in ["softmax_attention", "stickbreaking_attention", "mamba2"]:
+        if sequence_mixer_type in ["softmax_attention", "stickbreaking_attention"]:
             attention_flops = 4 * b * s * h * (h * (1 + block.num_key_value_heads / n) + s)
-        else:
+        elif sequence_mixer_type == "mamba2":
             attention_flops = 4 * b * s * h * (h * (1/ n) + s)
-            # raise NotImplementedError(f"unexpected sequence_mixer_type ({sequence_mixer_type})")
+        else:
+            raise NotImplementedError(f"unexpected sequence_mixer_type ({sequence_mixer_type})")
 
         block = config.mlp_blocks[layer_idx]
 
