@@ -77,7 +77,7 @@ class ExperimentsTracker:
             kwargs = wandb_args.to_dict() if checkpoint_metadata is None else checkpoint_metadata
             resume = None if checkpoint_metadata is None else "auto"
 
-            wandb.init(resume=resume, **kwargs)
+            wandb.init(resume=resume, settings=wandb.Settings(_service_wait=600), **kwargs)
 
             # this is for a custom step, we can't use the wandb step
             # since it doesn't allow time travel to the past

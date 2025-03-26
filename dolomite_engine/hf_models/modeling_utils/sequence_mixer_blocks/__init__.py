@@ -20,6 +20,7 @@ from .softmax_attention import (
     split_query_key_value_tensor_for_mqa,
 )
 from .stickbreaking_attention import PaddingFreeSBAttention, SBAttention
+from .stickbreaking_forget_attention import PaddingFreeSBForgetAttention, SBForgetAttention
 
 
 _ATTENTION_MODULES = {
@@ -93,5 +94,13 @@ def get_sequence_mixer(
                 return PaddingFreeSBAttention(**sequence_mixer_kwargs)
             else:
                 return SBAttention(**sequence_mixer_kwargs)
+        elif sequence_mixer_type == "stickbreaking_forget_attention":
+            sequence_mixer_kwargs['out_norm'] = block.out_norm
+            sequence_mixer_kwargs['head_bias'] = block.head_bias
+            if use_padding_free_transformer:
+                return PaddingFreeSBForgetAttention(**sequence_mixer_kwargs)
+            else:
+                return SBForgetAttention(**sequence_mixer_kwargs)
+
         else:
             raise ValueError(f"unexpected sequence_mixer_type ({sequence_mixer_type})")

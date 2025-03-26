@@ -28,6 +28,20 @@ class _StickbreakingAttentionArgs(BaseArgs):
     def model_post_init(self, __context: Any) -> None:
         assert self.sequence_mixer_type == "stickbreaking_attention"
 
+class _StickbreakingForgetAttentionArgs(BaseArgs):
+    sequence_mixer_type: str = "stickbreaking_forget_attention"
+    num_key_value_heads: int = 1
+    attention_head_type: AttentionHeadType = AttentionHeadType.mqa
+    dropout: float = 0
+    add_bias: bool = True
+    attention_multiplier: float | None = None
+    head_bias: bool = True
+    out_norm: bool = True
+
+    def model_post_init(self, __context: Any) -> None:
+        assert self.sequence_mixer_type == "stickbreaking_forget_attention"
+
+
 
 class _Mamba2Args(BaseArgs):
     sequence_mixer_type: str = "mamba2"
