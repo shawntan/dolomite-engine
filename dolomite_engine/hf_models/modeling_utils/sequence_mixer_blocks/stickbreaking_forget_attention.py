@@ -11,16 +11,36 @@ from .softmax_attention import Attention
 
 from ..linear import ParameterizedLinear
 
+from ...loss import add_aux_loss
+
 
 if is_stickbreaking_available():
     from stickbreaking_attention import sb_forget_varlen, sb_varlen
 
+import os
 try:
-    import os
+
     FORGET_THRESHOLD = float(os.environ.get("FORGET_THRESHOLD"))
+    log_rank_0(logging.INFO, 20 * "-")
     log_rank_0(logging.INFO, f"set FORGET_THRESHOLD={FORGET_THRESHOLD}")
+    try:
+        import atexit
+        FORGET_RECORD_STATS = os.environ.get("FORGET_RECORD_STATS")
+        if FORGET_RECORD_STATS != "":
+            log_rank_0(logging.INFO, f"set FORGET_RECORD_STATS={FORGET_RECORD_STATS}")
+            FORGET_STATS = {}
+            def save_statistics():
+                if FORGET_RECORD_STATS is not None:
+                    with open(FORGET_RECORD_STATS, 'wb') as f:
+                        torch.save(FORGET_STATS, f)
+            atexit.register(save_statistics)
+    except:
+        FORGET_STATS = None
+    log_rank_0(logging.INFO, 20 * "-")
+
 except:
     FORGET_THRESHOLD = None
+    FORGET_STATS = None
 
 
 def decoding_stickbreaking(q, k, v, scale=None):
@@ -88,9 +108,10 @@ class SBForgetAttention(Attention):
             causal=causal,
             layer_idx=layer_idx,
         )
+
         self.forget_gate = ParameterizedLinear(self.hidden_size, 1, bias=False)
         torch.nn.init.zeros_(self.forget_gate.weight)
-        print("head_bias", head_bias, "out_norm", out_norm)
+
         if head_bias:
             self.head_bias = torch.nn.Parameter(torch.zeros(self.hidden_size // self.head_dim, self.head_dim))
         else:
@@ -112,6 +133,7 @@ class SBForgetAttention(Attention):
         sb_metadata=None,
     ) -> torch.Tensor:
         global FORGET_THRESHOLD
+        global FORGET_STATS
         # assert past_key_values is None
         query, key, value = self._prepare_qkv_for_forward(hidden_states)
         softmax_scale = self._get_softmax_scale()
@@ -120,11 +142,23 @@ class SBForgetAttention(Attention):
             key, value = past_key_values.update(key, value, self.layer_idx)
 
         bsz_, _, length_, _ = query.size()
-        log_forget = F.logsigmoid(self.forget_gate(hidden_states))
+        logit_forget = self.forget_gate(hidden_states)
+        log_forget = F.logsigmoid(logit_forget)
+
+
+        # Forget gate aux loss:
+        # We want to suppress the forget_gate (make it lower, closer to 0),
+        # so make (1 - forget_gate) closer to 1, so log(1 - forget_gate) closer to 0
+        # log(1 - forget_gate) = logsigmoid(-z)
+        # logsigmoid(-z) = z - logsigmoid(z)
         if FORGET_THRESHOLD is not None:
             f = torch.exp(log_forget)
             mask = f < FORGET_THRESHOLD
             log_forget = log_forget.masked_fill(mask, -1000.0)
+            if FORGET_STATS is not None:
+                FORGET_STATS["forgot", self.layer_idx] = FORGET_STATS.get(("forgot", self.layer_idx), 0) + mask.sum().item()
+                FORGET_STATS["total", self.layer_idx] = FORGET_STATS.get(("total", self.layer_idx), 0) + mask.numel()
+
         log_forget = log_forget.expand(-1, -1, query.size(1)).permute(0, 2, 1).contiguous()
 
         if query.size(2) == key.size(2):
@@ -152,7 +186,7 @@ class SBForgetAttention(Attention):
             raise NotImplementedError("Cannot decode")
             hidden_states, rem = decoding_stickbreaking(q=query, k=key, v=value, scale=softmax_scale)
 
-        if self.head_bias:
+        if self.head_bias is not None:
             hidden_states = hidden_states + rem[..., None] * self.head_bias[None, :, None, :]
 
         hidden_states = hidden_states.permute(0, 2, 1, 3)
@@ -212,7 +246,13 @@ class PaddingFreeSBForgetAttention(SBForgetAttention):
         assert past_key_values is None
         query, key, value = self._prepare_qkv_for_forward(hidden_states)
         value = value.permute(1, 0, 2)
-        log_forget = F.logsigmoid(self.forget_gate(hidden_states))
+
+        logit_forget = self.forget_gate(hidden_states) 
+        log_forget = F.logsigmoid(logit_forget)
+        aux_loss = (logit_forget.mean(0) - log_forget.mean(0)).mean(-1)
+        add_aux_loss(aux_loss)
+
+
         log_forget = log_forget.expand(-1, query.size(1)).permute(1, 0)
         hidden_states, rem = sb_forget_varlen.sb_attn_varlen(
             q=query.permute(1, 0, 2),

@@ -148,7 +148,6 @@ class ModelWrapperForPretraining(ModelWrapper):
 
         lm_loss = lm_loss * lm_loss_multiplier
         aux_loss = get_aux_loss()
-
         if aux_loss == 0:
             loss = lm_loss
             output = {"loss": loss}
