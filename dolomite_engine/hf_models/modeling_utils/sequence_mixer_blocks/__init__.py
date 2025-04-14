@@ -19,6 +19,7 @@ from .softmax_attention import (
     split_query_key_value_tensor_for_mha,
     split_query_key_value_tensor_for_mqa,
 )
+from .forgetting_attention import ForgetAttention
 from .stickbreaking_attention import PaddingFreeSBAttention, SBAttention
 from .stickbreaking_forget_attention import PaddingFreeSBForgetAttention, SBForgetAttention
 
@@ -89,6 +90,13 @@ def get_sequence_mixer(
                 return PaddingFreeAttention(**sequence_mixer_kwargs)
             else:
                 return _ATTENTION_MODULES[attention_implementation](**sequence_mixer_kwargs)
+        elif sequence_mixer_type == "forget_attention":
+            # sequence_mixer_kwargs["softmax_dropout"] = block.softmax_dropout
+            if use_padding_free_transformer:
+                raise NotImplementedError("No padding free for forget_attention")
+            else:
+                return ForgetAttention(**sequence_mixer_kwargs)
+            
         elif sequence_mixer_type == "stickbreaking_attention":
             if use_padding_free_transformer:
                 return PaddingFreeSBAttention(**sequence_mixer_kwargs)

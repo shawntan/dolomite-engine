@@ -78,8 +78,8 @@ class SBAttention(Attention):
             layer_idx=layer_idx,
         )
 
-        self.head_bias = torch.nn.Parameter(torch.zeros(self.hidden_size // self.head_dim, self.head_dim))
-        self.norm = torch.nn.GroupNorm(self.num_heads, self.hidden_size)
+        # self.head_bias = torch.nn.Parameter(torch.zeros(self.hidden_size // self.head_dim, self.head_dim))
+        # self.norm = torch.nn.GroupNorm(self.num_heads, self.hidden_size)
 
     def forward(
         self,
@@ -133,11 +133,11 @@ class SBAttention(Attention):
 
             hidden_states, rem = decoding_stickbreaking(q=query, k=key, v=value, scale=softmax_scale)
 
-        hidden_states = hidden_states + rem[..., None] * self.head_bias[None, :, None, :]
+        # hidden_states = hidden_states + rem[..., None] * self.head_bias[None, :, None, :]
 
         hidden_states = hidden_states.permute(0, 2, 1, 3)
         hidden_states = hidden_states.reshape(bsz_ * length_, self.hidden_size)
-        hidden_states = self.norm(hidden_states)
+        # hidden_states = self.norm(hidden_states)
         hidden_states = hidden_states.view(bsz_, length_, self.hidden_size)
 
         hidden_states = self.c_proj(hidden_states)
@@ -200,11 +200,11 @@ class PaddingFreeSBAttention(SBAttention):
             cu_seqlens=cu_seqlens,
             max_seqlens=max_seqlen,
         )
-        hidden_states = hidden_states + rem[..., None] * self.head_bias[:, None, :]
+        # hidden_states = hidden_states + rem[..., None] * self.head_bias[:, None, :]
         hidden_states = hidden_states.permute(1, 0, 2)
 
         hidden_states = hidden_states.view(-1, self.hidden_size)
-        hidden_states = self.norm(hidden_states)
+        # hidden_states = self.norm(hidden_states)
 
         hidden_states = self.c_proj(hidden_states)
         hidden_states = self.dropout(hidden_states)

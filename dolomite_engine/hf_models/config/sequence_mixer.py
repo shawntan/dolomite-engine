@@ -17,6 +17,13 @@ class _SoftmaxAttentionArgs(BaseArgs):
         assert self.sequence_mixer_type == "softmax_attention"
 
 
+class _ForgetAttentionArgs(_SoftmaxAttentionArgs):
+    sequence_mixer_type: str = "forget_attention"
+    def model_post_init(self, __context: Any) -> None:
+        assert self.sequence_mixer_type == "forget_attention"
+
+
+
 class _StickbreakingAttentionArgs(BaseArgs):
     sequence_mixer_type: str = "stickbreaking_attention"
     num_key_value_heads: int = 1

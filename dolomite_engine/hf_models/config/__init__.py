@@ -6,7 +6,7 @@ from transformers import PretrainedConfig
 from ...utils import BaseArgs
 from ..enums import AttentionHeadType, InitMethod, PositionEmbeddingType
 from .mlp import _MLPArgs, _MoEArgs
-from .sequence_mixer import _Mamba2Args, _SoftmaxAttentionArgs, _StickbreakingAttentionArgs, _StickbreakingForgetAttentionArgs
+from .sequence_mixer import _Mamba2Args, _SoftmaxAttentionArgs, _StickbreakingAttentionArgs, _StickbreakingForgetAttentionArgs, _ForgetAttentionArgs
 
 
 def _hold_base_args(key: str) -> Callable:
@@ -158,7 +158,8 @@ class CommonConfig(PretrainedConfig):
             sequence_mixer_block = deepcopy(self.sequence_mixer_blocks[i])
             sequence_mixer_type = sequence_mixer_block.pop("sequence_mixer_type", "softmax_attention")
 
-            if sequence_mixer_type in ["softmax_attention", "stickbreaking_attention", "stickbreaking_forget_attention"]:
+            if sequence_mixer_type in [
+                "softmax_attention", "stickbreaking_attention", "stickbreaking_forget_attention", "forget_attention"]:
                 attention_head_type = AttentionHeadType(sequence_mixer_block.pop("attention_head_type", "mqa"))
                 num_key_value_heads = sequence_mixer_block.pop("num_key_value_heads", None)
 
@@ -193,6 +194,8 @@ class CommonConfig(PretrainedConfig):
 
                 if sequence_mixer_type == "softmax_attention":
                     sequence_mixer_class = _SoftmaxAttentionArgs
+                elif sequence_mixer_type == "forget_attention":
+                    sequence_mixer_class = _ForgetAttentionArgs
                 elif sequence_mixer_type == "stickbreaking_attention":
                     sequence_mixer_class = _StickbreakingAttentionArgs
                 elif sequence_mixer_type == "stickbreaking_forget_attention":

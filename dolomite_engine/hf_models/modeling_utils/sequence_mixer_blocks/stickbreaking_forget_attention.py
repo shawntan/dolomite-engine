@@ -43,32 +43,28 @@ except:
     FORGET_STATS = None
 
 
-def decoding_stickbreaking(q, k, v, scale=None):
+def decoding_stickbreaking(q, k, v, log_forget, scale=None):
     """
     Stick-breaking attention weights.
     """
     if scale is None:
         scale = 1 / math.sqrt(q.shape[-1])
-    # logits = q @ k[..., :-1, :].transpose(-1, -2) * scale
 
     assert q.size(2) == 1
     original_dtype = q.dtype
     q = q.float()
     k = k.float()
-    # logits = torch.einsum('bhid,bhjd->bhij', q, k[..., :-1, :]) * scale
-    logits = q @ k[..., :-1, :].transpose(-1, -2) * scale
-    # logits = logits.float()
-    log_z = F.logsigmoid(logits).to(original_dtype)
-    log_beta = F.logsigmoid(-logits).to(original_dtype)
-    # re_cum_log_beta = log_beta.sum(dim=-1, keepdim=True) - log_beta.cumsum(dim=-1)
-    re_cum_log_beta = log_beta.flip(-1).cumsum(dim=-1).flip(-1) - log_beta
-    # re_cum_log_beta = log_beta.sum(dim=-1, keepdim=True) - log_beta.cumsum(dim=-1)
-    log_att = log_z + re_cum_log_beta
-    # print("log_att", log_att[0, 0, 0, -20:])
+    # bhid bhjd
+    logits = q @ k[..., :-1, :].transpose(-1, -2) * scale # bhij
+    log_fg = log_forget[:, :, None, :]
+    # log_beta = F.logsigmoid(logits).to(original_dtype)
+    log_beta = (F.logsigmoid(logits) + log_fg).to(original_dtype)
+    # log_om_beta = F.logsigmoid(-logits).to(original_dtype)
+    log_om_beta = torch.log(1 - torch.exp(log_beta)).to(original_dtype)
+    re_cum_log_beta = log_om_beta.flip(-1).cumsum(dim=-1).flip(-1) - log_om_beta
+    log_att = log_beta + re_cum_log_beta
     att = log_att.exp()
-    #  print("att    ", att[0, 0, 0, -20:])
     out = torch.einsum("bhij,bhjd->bhid", att, v[..., :-1, :])
-    # out = att @ v[..., :-1, :]
     return out, 1 - att.sum(dim=-1)
 
 class SBForgetAttention(Attention):
@@ -143,7 +139,10 @@ class SBForgetAttention(Attention):
 
         bsz_, _, length_, _ = query.size()
         logit_forget = self.forget_gate(hidden_states)
-        log_forget = F.logsigmoid(logit_forget)
+        log_forget: torch.Tensor = F.logsigmoid(logit_forget)
+        aux_loss = (logit_forget.mean() - log_forget.mean())
+        add_aux_loss(aux_loss)
+
 
 
         # Forget gate aux loss:
@@ -168,6 +167,7 @@ class SBForgetAttention(Attention):
                 key_ = key.flatten(0, 1)
                 value_ = value.flatten(0, 1)
                 log_forget_ = log_forget.flatten(0, 1)
+
                 hidden_states_, rem_ = sb_forget_varlen.sb_attn_varlen(
                     q=query_,
                     k=key_,
@@ -183,8 +183,7 @@ class SBForgetAttention(Attention):
                 return hidden_states, rem
             hidden_states, rem = attn_1(query, key, value, softmax_scale)
         else:
-            raise NotImplementedError("Cannot decode")
-            hidden_states, rem = decoding_stickbreaking(q=query, k=key, v=value, scale=softmax_scale)
+            hidden_states, rem = decoding_stickbreaking(q=query, k=key, v=value, log_forget=log_forget, scale=softmax_scale)
 
         if self.head_bias is not None:
             hidden_states = hidden_states + rem[..., None] * self.head_bias[None, :, None, :]

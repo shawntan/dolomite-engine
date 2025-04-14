@@ -91,7 +91,7 @@ def get_model_tflops(
         sequence_mixer_type = block.sequence_mixer_type
 
         # FIXME fix FLOPs computation for Mamba2
-        if sequence_mixer_type in ["softmax_attention", "stickbreaking_attention", "stickbreaking_forget_attention"]:
+        if sequence_mixer_type in ["softmax_attention", "stickbreaking_attention", "stickbreaking_forget_attention", "forget_attention"]:
             attention_flops = 4 * b * s * h * (h * (1 + block.num_key_value_heads / n) + s)
         elif sequence_mixer_type == "mamba2":
             attention_flops = 4 * b * s * h * (h * (1/ n) + s)
