@@ -1,0 +1,590 @@
+datasets:
+  # class_name - data_name & data_sampling_ratio are not used but need to be passed to avoid errors
+  - class_name: MegatronDataset
+    data_name: Megatron
+    data_sampling_ratio: 1
+    class_args:
+      eval_steps: 2
+      data_cache_path: /proj/checkpoints/shawntan/tokenizer_proj/cache
+      # Option 1: data loading using --data-path with single file
+      data_path:
+        - 1
+        - /proj/checkpoints/shawntan/tokenizer_proj/bpe/dclm_00_text
+        - 1
+        - /proj/checkpoints/shawntan/tokenizer_proj/bpe/dclm_01_text
+        - 1
+        - /proj/checkpoints/shawntan/tokenizer_proj/bpe/dclm_02_text
+        - 1
+        - /proj/checkpoints/shawntan/tokenizer_proj/bpe/dclm_03_text
+        - 1
+        - /proj/checkpoints/shawntan/tokenizer_proj/bpe/dclm_04_text
+        - 1
+        - /proj/checkpoints/shawntan/tokenizer_proj/bpe/dclm_05_text
+        - 1
+        - /proj/checkpoints/shawntan/tokenizer_proj/bpe/dclm_06_text
+        - 1
+        - /proj/checkpoints/shawntan/tokenizer_proj/bpe/dclm_07_text
+        - 1
+        - /proj/checkpoints/shawntan/tokenizer_proj/bpe/dclm_08_text
+        - 1
+        - /proj/checkpoints/shawntan/tokenizer_proj/bpe/dclm_09_text
+        - 1
+        - /proj/checkpoints/shawntan/tokenizer_proj/bpe/dclm_10_text
+        - 1
+        - /proj/checkpoints/shawntan/tokenizer_proj/bpe/dclm_11_text
+        - 1
+        - /proj/checkpoints/shawntan/tokenizer_proj/bpe/dclm_12_text
+        - 1
+        - /proj/checkpoints/shawntan/tokenizer_proj/bpe/dclm_13_text
+        - 1
+        - /proj/checkpoints/shawntan/tokenizer_proj/bpe/dclm_14_text
+        - 1
+        - /proj/checkpoints/shawntan/tokenizer_proj/bpe/dclm_15_text
+        - 1
+        - /proj/checkpoints/shawntan/tokenizer_proj/bpe/dclm_16_text
+        - 1
+        - /proj/checkpoints/shawntan/tokenizer_proj/bpe/dclm_17_text
+        - 1
+        - /proj/checkpoints/shawntan/tokenizer_proj/bpe/dclm_18_text
+        - 1
+        - /proj/checkpoints/shawntan/tokenizer_proj/bpe/dclm_19_text
+        - 1
+        - /proj/checkpoints/shawntan/tokenizer_proj/bpe/dclm_20_text
+        - 1
+        - /proj/checkpoints/shawntan/tokenizer_proj/bpe/dclm_21_text
+        - 1
+        - /proj/checkpoints/shawntan/tokenizer_proj/bpe/dclm_22_text
+        - 1
+        - /proj/checkpoints/shawntan/tokenizer_proj/bpe/dclm_23_text
+        - 1
+        - /proj/checkpoints/shawntan/tokenizer_proj/bpe/dclm_24_text
+        - 1
+        - /proj/checkpoints/shawntan/tokenizer_proj/bpe/dclm_25_text
+        - 1
+        - /proj/checkpoints/shawntan/tokenizer_proj/bpe/dclm_26_text
+        - 1
+        - /proj/checkpoints/shawntan/tokenizer_proj/bpe/dclm_27_text
+        - 1
+        - /proj/checkpoints/shawntan/tokenizer_proj/bpe/dclm_28_text
+        - 1
+        - /proj/checkpoints/shawntan/tokenizer_proj/bpe/dclm_29_text
+        - 1
+        - /proj/checkpoints/shawntan/tokenizer_proj/bpe/dclm_30_text
+        - 1
+        - /proj/checkpoints/shawntan/tokenizer_proj/bpe/dclm_31_text
+        - 1
+        - /proj/checkpoints/shawntan/tokenizer_proj/bpe/dclm_32_text
+        - 1
+        - /proj/checkpoints/shawntan/tokenizer_proj/bpe/dclm_33_text
+        - 1
+        - /proj/checkpoints/shawntan/tokenizer_proj/bpe/dclm_34_text
+        - 1
+        - /proj/checkpoints/shawntan/tokenizer_proj/bpe/dclm_35_text
+        - 1
+        - /proj/checkpoints/shawntan/tokenizer_proj/bpe/dclm_36_text
+        - 1
+        - /proj/checkpoints/shawntan/tokenizer_proj/bpe/dclm_37_text
+        - 1
+        - /proj/checkpoints/shawntan/tokenizer_proj/bpe/dclm_38_text
+        - 1
+        - /proj/checkpoints/shawntan/tokenizer_proj/bpe/dclm_39_text
+        - 1
+        - /proj/checkpoints/shawntan/tokenizer_proj/bpe/dclm_40_text
+        - 1
+        - /proj/checkpoints/shawntan/tokenizer_proj/bpe/dclm_41_text
+        - 1
+        - /proj/checkpoints/shawntan/tokenizer_proj/bpe/dclm_42_text
+        - 1
+        - /proj/checkpoints/shawntan/tokenizer_proj/bpe/dclm_43_text
+        - 1
+        - /proj/checkpoints/shawntan/tokenizer_proj/bpe/dclm_44_text
+        - 1
+        - /proj/checkpoints/shawntan/tokenizer_proj/bpe/dclm_45_text
+        - 1
+        - /proj/checkpoints/shawntan/tokenizer_proj/bpe/dclm_46_text
+        - 1
+        - /proj/checkpoints/shawntan/tokenizer_proj/bpe/dclm_47_text
+        - 1
+        - /proj/checkpoints/shawntan/tokenizer_proj/bpe/dclm_48_text
+        - 1
+        - /proj/checkpoints/shawntan/tokenizer_proj/bpe/dclm_49_text
+        - 1
+        - /proj/checkpoints/shawntan/tokenizer_proj/bpe/dclm_50_text
+        - 1
+        - /proj/checkpoints/shawntan/tokenizer_proj/bpe/dclm_51_text
+        - 1
+        - /proj/checkpoints/shawntan/tokenizer_proj/bpe/dclm_52_text
+        - 1
+        - /proj/checkpoints/shawntan/tokenizer_proj/bpe/dclm_53_text
+        - 1
+        - /proj/checkpoints/shawntan/tokenizer_proj/bpe/dclm_54_text
+        - 1
+        - /proj/checkpoints/shawntan/tokenizer_proj/bpe/dclm_55_text
+        - 1
+        - /proj/checkpoints/shawntan/tokenizer_proj/bpe/dclm_56_text
+        - 1
+        - /proj/checkpoints/shawntan/tokenizer_proj/bpe/dclm_57_text
+        - 1
+        - /proj/checkpoints/shawntan/tokenizer_proj/bpe/dclm_58_text
+        - 1
+        - /proj/checkpoints/shawntan/tokenizer_proj/bpe/dclm_59_text
+        - 1
+        - /proj/checkpoints/shawntan/tokenizer_proj/bpe/dclm_60_text
+        - 24
+        - /proj/checkpoints/shawntan/tokenizer_proj/bpe/dclm_61_text
+      split: 100,0,0
+      sequence_length: 4096
+
+tokenizer_args:
+  tokenizer_name: /u/shawntan/proj/new-dev/pcatt/bpe_vocab_size_65536-min_word_count_1 
+
+kernel_args:
+  kernels:
+    - cute_rmsnorm
+    - cute_swiglu_unchunked
+    # - mamba2_ssm
+    # - scattermoe
+
+model_args:
+  model_class: AutoModelForCausalLM
+  pretrained_config:
+    initializer_range: 0.1
+    layer_norm_epsilon: 1e-05
+    model_type: gpt_dolomite
+    normalization_function: rmsnorm
+    position_embedding_type: rope
+    hidden_size: 1536
+    num_attention_heads: 12
+    m_width: 6
+    m_emb: 12
+    m_residual: 0.22
+    num_layers: 40
+    init_method: mup
+    bos_token_id: 65536
+    eos_token_id: 2
+    pad_token_id: 0
+    vocab_size: 65664
+    max_position_embeddings: 4096
+    sequence_mixer_blocks:
+      - sequence_mixer_type: softmax_attention
+        attention_head_type: gqa
+        num_key_value_heads: 4
+        add_bias: false
+        attention_multiplier: 0.0078125
+      - sequence_mixer_type: softmax_attention
+        attention_head_type: gqa
+        num_key_value_heads: 4
+        add_bias: false
+        attention_multiplier: 0.0078125
+      - sequence_mixer_type: softmax_attention
+        attention_head_type: gqa
+        num_key_value_heads: 4
+        add_bias: false
+        attention_multiplier: 0.0078125
+      - sequence_mixer_type: softmax_attention
+        attention_head_type: gqa
+        num_key_value_heads: 4
+        add_bias: false
+        attention_multiplier: 0.0078125
+      - sequence_mixer_type: softmax_attention
+        attention_head_type: gqa
+        num_key_value_heads: 4
+        add_bias: false
+        attention_multiplier: 0.0078125
+      - sequence_mixer_type: softmax_attention
+        attention_head_type: gqa
+        num_key_value_heads: 4
+        add_bias: false
+        attention_multiplier: 0.0078125
+      - sequence_mixer_type: softmax_attention
+        attention_head_type: gqa
+        num_key_value_heads: 4
+        add_bias: false
+        attention_multiplier: 0.0078125
+      - sequence_mixer_type: softmax_attention
+        attention_head_type: gqa
+        num_key_value_heads: 4
+        add_bias: false
+        attention_multiplier: 0.0078125
+      - sequence_mixer_type: softmax_attention
+        attention_head_type: gqa
+        num_key_value_heads: 4
+        add_bias: false
+        attention_multiplier: 0.0078125
+      - sequence_mixer_type: softmax_attention
+        attention_head_type: gqa
+        num_key_value_heads: 4
+        add_bias: false
+        attention_multiplier: 0.0078125
+      - sequence_mixer_type: softmax_attention
+        attention_head_type: gqa
+        num_key_value_heads: 4
+        add_bias: false
+        attention_multiplier: 0.0078125
+      - sequence_mixer_type: softmax_attention
+        attention_head_type: gqa
+        num_key_value_heads: 4
+        add_bias: false
+        attention_multiplier: 0.0078125
+      - sequence_mixer_type: softmax_attention
+        attention_head_type: gqa
+        num_key_value_heads: 4
+        add_bias: false
+        attention_multiplier: 0.0078125
+      - sequence_mixer_type: softmax_attention
+        attention_head_type: gqa
+        num_key_value_heads: 4
+        add_bias: false
+        attention_multiplier: 0.0078125
+      - sequence_mixer_type: softmax_attention
+        attention_head_type: gqa
+        num_key_value_heads: 4
+        add_bias: false
+        attention_multiplier: 0.0078125
+      - sequence_mixer_type: softmax_attention
+        attention_head_type: gqa
+        num_key_value_heads: 4
+        add_bias: false
+        attention_multiplier: 0.0078125
+      - sequence_mixer_type: softmax_attention
+        attention_head_type: gqa
+        num_key_value_heads: 4
+        add_bias: false
+        attention_multiplier: 0.0078125
+      - sequence_mixer_type: softmax_attention
+        attention_head_type: gqa
+        num_key_value_heads: 4
+        add_bias: false
+        attention_multiplier: 0.0078125
+      - sequence_mixer_type: softmax_attention
+        attention_head_type: gqa
+        num_key_value_heads: 4
+        add_bias: false
+        attention_multiplier: 0.0078125
+      - sequence_mixer_type: softmax_attention
+        attention_head_type: gqa
+        num_key_value_heads: 4
+        add_bias: false
+        attention_multiplier: 0.0078125
+      - sequence_mixer_type: softmax_attention
+        attention_head_type: gqa
+        num_key_value_heads: 4
+        add_bias: false
+        attention_multiplier: 0.0078125
+      - sequence_mixer_type: softmax_attention
+        attention_head_type: gqa
+        num_key_value_heads: 4
+        add_bias: false
+        attention_multiplier: 0.0078125
+      - sequence_mixer_type: softmax_attention
+        attention_head_type: gqa
+        num_key_value_heads: 4
+        add_bias: false
+        attention_multiplier: 0.0078125
+      - sequence_mixer_type: softmax_attention
+        attention_head_type: gqa
+        num_key_value_heads: 4
+        add_bias: false
+        attention_multiplier: 0.0078125
+      - sequence_mixer_type: softmax_attention
+        attention_head_type: gqa
+        num_key_value_heads: 4
+        add_bias: false
+        attention_multiplier: 0.0078125
+      - sequence_mixer_type: softmax_attention
+        attention_head_type: gqa
+        num_key_value_heads: 4
+        add_bias: false
+        attention_multiplier: 0.0078125
+      - sequence_mixer_type: softmax_attention
+        attention_head_type: gqa
+        num_key_value_heads: 4
+        add_bias: false
+        attention_multiplier: 0.0078125
+      - sequence_mixer_type: softmax_attention
+        attention_head_type: gqa
+        num_key_value_heads: 4
+        add_bias: false
+        attention_multiplier: 0.0078125
+      - sequence_mixer_type: softmax_attention
+        attention_head_type: gqa
+        num_key_value_heads: 4
+        add_bias: false
+        attention_multiplier: 0.0078125
+      - sequence_mixer_type: softmax_attention
+        attention_head_type: gqa
+        num_key_value_heads: 4
+        add_bias: false
+        attention_multiplier: 0.0078125
+      - sequence_mixer_type: softmax_attention
+        attention_head_type: gqa
+        num_key_value_heads: 4
+        add_bias: false
+        attention_multiplier: 0.0078125
+      - sequence_mixer_type: softmax_attention
+        attention_head_type: gqa
+        num_key_value_heads: 4
+        add_bias: false
+        attention_multiplier: 0.0078125
+      - sequence_mixer_type: softmax_attention
+        attention_head_type: gqa
+        num_key_value_heads: 4
+        add_bias: false
+        attention_multiplier: 0.0078125
+      - sequence_mixer_type: softmax_attention
+        attention_head_type: gqa
+        num_key_value_heads: 4
+        add_bias: false
+        attention_multiplier: 0.0078125
+      - sequence_mixer_type: softmax_attention
+        attention_head_type: gqa
+        num_key_value_heads: 4
+        add_bias: false
+        attention_multiplier: 0.0078125
+      - sequence_mixer_type: softmax_attention
+        attention_head_type: gqa
+        num_key_value_heads: 4
+        add_bias: false
+        attention_multiplier: 0.0078125
+      - sequence_mixer_type: softmax_attention
+        attention_head_type: gqa
+        num_key_value_heads: 4
+        add_bias: false
+        attention_multiplier: 0.0078125
+      - sequence_mixer_type: softmax_attention
+        attention_head_type: gqa
+        num_key_value_heads: 4
+        add_bias: false
+        attention_multiplier: 0.0078125
+      - sequence_mixer_type: softmax_attention
+        attention_head_type: gqa
+        num_key_value_heads: 4
+        add_bias: false
+        attention_multiplier: 0.0078125
+      - sequence_mixer_type: softmax_attention
+        attention_head_type: gqa
+        num_key_value_heads: 4
+        add_bias: false
+        attention_multiplier: 0.0078125
+    mlp_blocks:
+      - activation_function: swiglu
+        mlp_type: MLP
+        add_bias: false
+        intermediate_size: 4096
+      - activation_function: swiglu
+        mlp_type: MLP
+        add_bias: false
+        intermediate_size: 4096
+      - activation_function: swiglu
+        mlp_type: MLP
+        add_bias: false
+        intermediate_size: 4096
+      - activation_function: swiglu
+        mlp_type: MLP
+        add_bias: false
+        intermediate_size: 4096
+      - activation_function: swiglu
+        mlp_type: MLP
+        add_bias: false
+        intermediate_size: 4096
+      - activation_function: swiglu
+        mlp_type: MLP
+        add_bias: false
+        intermediate_size: 4096
+      - activation_function: swiglu
+        mlp_type: MLP
+        add_bias: false
+        intermediate_size: 4096
+      - activation_function: swiglu
+        mlp_type: MLP
+        add_bias: false
+        intermediate_size: 4096
+      - activation_function: swiglu
+        mlp_type: MLP
+        add_bias: false
+        intermediate_size: 4096
+      - activation_function: swiglu
+        mlp_type: MLP
+        add_bias: false
+        intermediate_size: 4096
+      - activation_function: swiglu
+        mlp_type: MLP
+        add_bias: false
+        intermediate_size: 4096
+      - activation_function: swiglu
+        mlp_type: MLP
+        add_bias: false
+        intermediate_size: 4096
+      - activation_function: swiglu
+        mlp_type: MLP
+        add_bias: false
+        intermediate_size: 4096
+      - activation_function: swiglu
+        mlp_type: MLP
+        add_bias: false
+        intermediate_size: 4096
+      - activation_function: swiglu
+        mlp_type: MLP
+        add_bias: false
+        intermediate_size: 4096
+      - activation_function: swiglu
+        mlp_type: MLP
+        add_bias: false
+        intermediate_size: 4096
+      - activation_function: swiglu
+        mlp_type: MLP
+        add_bias: false
+        intermediate_size: 4096
+      - activation_function: swiglu
+        mlp_type: MLP
+        add_bias: false
+        intermediate_size: 4096
+      - activation_function: swiglu
+        mlp_type: MLP
+        add_bias: false
+        intermediate_size: 4096
+      - activation_function: swiglu
+        mlp_type: MLP
+        add_bias: false
+        intermediate_size: 4096
+      - activation_function: swiglu
+        mlp_type: MLP
+        add_bias: false
+        intermediate_size: 4096
+      - activation_function: swiglu
+        mlp_type: MLP
+        add_bias: false
+        intermediate_size: 4096
+      - activation_function: swiglu
+        mlp_type: MLP
+        add_bias: false
+        intermediate_size: 4096
+      - activation_function: swiglu
+        mlp_type: MLP
+        add_bias: false
+        intermediate_size: 4096
+      - activation_function: swiglu
+        mlp_type: MLP
+        add_bias: false
+        intermediate_size: 4096
+      - activation_function: swiglu
+        mlp_type: MLP
+        add_bias: false
+        intermediate_size: 4096
+      - activation_function: swiglu
+        mlp_type: MLP
+        add_bias: false
+        intermediate_size: 4096
+      - activation_function: swiglu
+        mlp_type: MLP
+        add_bias: false
+        intermediate_size: 4096
+      - activation_function: swiglu
+        mlp_type: MLP
+        add_bias: false
+        intermediate_size: 4096
+      - activation_function: swiglu
+        mlp_type: MLP
+        add_bias: false
+        intermediate_size: 4096
+      - activation_function: swiglu
+        mlp_type: MLP
+        add_bias: false
+        intermediate_size: 4096
+      - activation_function: swiglu
+        mlp_type: MLP
+        add_bias: false
+        intermediate_size: 4096
+      - activation_function: swiglu
+        mlp_type: MLP
+        add_bias: false
+        intermediate_size: 4096
+      - activation_function: swiglu
+        mlp_type: MLP
+        add_bias: false
+        intermediate_size: 4096
+      - activation_function: swiglu
+        mlp_type: MLP
+        add_bias: false
+        intermediate_size: 4096
+      - activation_function: swiglu
+        mlp_type: MLP
+        add_bias: false
+        intermediate_size: 4096
+      - activation_function: swiglu
+        mlp_type: MLP
+        add_bias: false
+        intermediate_size: 4096
+      - activation_function: swiglu
+        mlp_type: MLP
+        add_bias: false
+        intermediate_size: 4096
+      - activation_function: swiglu
+        mlp_type: MLP
+        add_bias: false
+        intermediate_size: 4096
+      - activation_function: swiglu
+        mlp_type: MLP
+        add_bias: false
+        intermediate_size: 4096
+  use_padding_free_transformer: true
+  attention_implementation: flash_attention_2
+  efficient_initialization: false
+
+tuning_args:
+  tuning_method: pretraining
+
+save_args:
+  save_path: /proj/checkpoints/shawntan/tokenizer_proj/checkpoints/bpe-1b-samedocs
+  save_interval: 5000
+
+load_args:
+  load_path: /proj/checkpoints/shawntan/tokenizer_proj/checkpoints/bpe-1b-samedocs
+
+logging_args:
+  log_interval: 10
+  experiments_tracker_name: wandb
+  wandb_args:
+    project: pcatt-experiments
+    name: bpe-1b-samedocs
+
+
+training_parameters:
+  num_training_steps: 125000
+  eval_interval: 10000000
+  micro_batch_size: 4
+  gradient_accumulation_steps: 2
+  eval_during_training: false
+
+
+optimizer_args:
+  params_group_method: mup
+  class_name: TorchAdamW
+  class_args:
+    lr: 0.01
+    weight_decay: 0.1
+    betas:
+      - 0.9
+      - 0.95
+    eps: 1e-10
+
+lr_scheduler_args:
+  lr_decay_style: power
+  num_warmup_steps: 2500
+  num_constant_steps: 0
+  num_decay_steps: 122500
+  extra_lr_scheduler_args:
+    # 4 * global_batch_size
+    a: 4096
+    # constant
+    b: -0.51
+    # global_batch_size in number of tokens
+    c: 4194304
+
+mixed_precision_args:
+  dtype: bf16
+
+distributed_args:
+  stage: 0
+  torch_compile: true
+
