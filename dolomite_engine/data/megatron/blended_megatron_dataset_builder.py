@@ -78,6 +78,7 @@ class BlendedMegatronDatasetBuilder(object):
             if len(blend) == 1:
                 return self._build_megatron_dataset_splits(blend[0], split, self.sizes)
 
+            print(blend, self.sizes)
             # Blend consists of multiple weights and prefixes
             (
                 prefix_per_dataset,
@@ -88,6 +89,7 @@ class BlendedMegatronDatasetBuilder(object):
             megatron_datasets = [[] for _ in range(len(Split))]
 
             for i in range(len(prefix_per_dataset)):
+                print(prefix_per_dataset[i], split, sizes_per_dataset[i])
                 megatron_datasets_split = self._build_megatron_dataset_splits(
                     prefix_per_dataset[i], split, sizes_per_dataset[i]
                 )
@@ -107,6 +109,8 @@ class BlendedMegatronDatasetBuilder(object):
                     blended_datasets.append(None)
                 else:
                     assert all(is_none) or not any(is_none)
+                    print(megatron_datasets[i], len(megatron_datasets[i]), weight_per_dataset, size_per_split[i], self.config)
+                    print(list(len(x) for x in megatron_datasets[i]))
                     blended_datasets.append(
                         self._build_generic_dataset(
                             BlendedDataset,
@@ -116,7 +120,6 @@ class BlendedMegatronDatasetBuilder(object):
                             config=self.config,
                         )
                     )
-
             return blended_datasets
 
         else:
@@ -242,7 +245,7 @@ class BlendedMegatronDatasetBuilder(object):
         for names, paths, splits, weights in zip(group_names, split_paths, split_splits, split_weights):
             assert len(paths) == len(splits)
             assert len(paths) == len(weights)
-
+            print(names, paths, splits, weights)
             if len(paths) == 1:
                 assert weights[0] == 1
 

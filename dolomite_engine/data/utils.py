@@ -157,5 +157,4 @@ def get_next_batch(x: Iterable | None) -> dict:
     # train_dataloader is always None on TP ranks other than 0
     if x is None:
         return None
-
     return next(x)

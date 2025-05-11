@@ -2,6 +2,9 @@
 # export NCCL_DEBUG="INFO"
 # export NCCL_DEBUG_FILE="$LOG_PATH/NCCL_DEBUG.%h.%p.txt"
 # export NCCL_TOPO_DUMP_FILE="$LOG_PATH/NCCL_TOP.%h.xml"
+eval "$(conda shell.bash hook)"
+conda activate /proj/checkpoints/shawntan/conda-envs/dev-env
+which python
 export NCCL_SOCKET_IFNAME="ib,bond"
 export NCCL_IB_CUDA_SUPPORT=1
 

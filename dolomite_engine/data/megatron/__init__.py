@@ -100,6 +100,7 @@ def get_megatron_gpt_dataloaders(args: TrainingArgs, tokenizer: AutoTokenizer, c
     # Option 3: data loading using --(train|val|test)-data-path with multiple weighted files
     if data_path is not None or train_data_path is not None:
         train_ds, val_ds, test_ds = gpt_dataset_builder.build()
+        print("train_ds", len(train_ds))
 
         if not isinstance(val_ds, list):
             val_ds = [val_ds]
@@ -164,7 +165,7 @@ def get_megatron_gpt_dataloaders(args: TrainingArgs, tokenizer: AutoTokenizer, c
 
             if is_built_on_rank:
                 assert dataset is not None, "dataset shouldn't be None when is_built_on_rank is True"
-
+                print("Dispatching Dataset size:", len(dataset))
                 batch_sampler = MegatronBatchSampler(
                     total_samples=len(dataset),
                     consumed_samples=consumed_samples,
@@ -198,6 +199,7 @@ def get_megatron_gpt_dataloaders(args: TrainingArgs, tokenizer: AutoTokenizer, c
             if dataset is None:
                 return None
 
+            print("Dataset size:", len(dataset))
             batch_sampler = MegatronBatchSampler(
                 total_samples=len(dataset),
                 consumed_samples=consumed_samples,

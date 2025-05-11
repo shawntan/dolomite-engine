@@ -1,11 +1,12 @@
 # Copyright (c) 2022, NVIDIA CORPORATION. All rights reserved.
-
+from pcatt.hf.greedtok import GreedTok
 import json
 import multiprocessing
 from argparse import ArgumentParser, Namespace
 from typing import List
 
 import torch
+import datasets
 from datasets import load_dataset
 from tqdm import tqdm
 from transformers import AutoTokenizer
@@ -14,8 +15,9 @@ from dolomite_engine.data.megatron.indexed_dataset import DType, MMapIndexedData
 
 
 class Encoder:
-    def __init__(self, tokenizer: AutoTokenizer, json_keys: List[str], append_eod: bool) -> None:
-        self.tokenizer = tokenizer
+    def __init__(self, tokenizer: AutoTokenizer, json_keys: List[str], append_eod: bool, tokenizer_str: str) -> None:
+        self.tokenizer_str = tokenizer_str
+        self.tokenizer = None
         self.json_keys = json_keys
         self.append_eod = append_eod
 
@@ -24,6 +26,7 @@ class Encoder:
         for key in self.json_keys:
             text = data[key]
             document_ids = self.tokenizer.encode(text)
+            # assert self.tokenizer.decode(document_ids) == text
             if len(document_ids) > 0:
                 if self.append_eod:
                     document_ids.append(self.tokenizer.eos_token_id)
@@ -38,7 +41,12 @@ class Encoder:
         json_str = bytes_obj.decode("utf-8")
         return self.encode(json_str)
 
+    def load_tokenizer(self):
+        if self.tokenizer is None:
+            self.tokenizer = AutoTokenizer.from_pretrained(self.tokenizer_str)
+
     def encode_hf(self, sample):
+        self.load_tokenizer()
         return self._encode_data(sample)
 
 
@@ -50,6 +58,10 @@ def get_args() -> Namespace:
     group.add_argument(
         "--subset", type=str, default=None, help="Subset argument when loading input data from a HuggingFace dataset"
     )
+    group.add_argument(
+        "--split", type=str, default="train", help="Split argument when loading input data from a HuggingFace dataset"
+    )
+
     group.add_argument(
         "--json-keys", nargs="+", default=["text"], help="space separate listed of keys to extract from json"
     )
@@ -73,39 +85,22 @@ def main() -> None:
     args = get_args()
 
     tokenizer = AutoTokenizer.from_pretrained(args.tokenizer)
-    encoder = Encoder(tokenizer, args.json_keys, args.append_eod)
+    encoder = Encoder(tokenizer, args.json_keys, args.append_eod, tokenizer_str=args.tokenizer)
 
-    pool = multiprocessing.Pool(args.workers)
-    print("Opening", args.input)
+    def init():
+        encoder.tokenizer = AutoTokenizer.from_pretrained(args.tokenizer)
+    print(args.input, args.subset, args.split)
+    pool = multiprocessing.Pool(args.workers, initializer=init)
+    # ds = load_dataset(args.input, use_auth_token=True, streaming=True, split=args.split, data_dir=args.subset)
+    ds = load_dataset(
+        args.input,
+        data_dir=args.subset,
+        split=args.split, 
+        # streaming=True
+    )
 
-    if args.input.endswith(".jsonl"):
-        print("Input is a jsonl file")
 
-        assert args.subset is None, f"subset argument set to: {args.subset}, but loading a jsonl file."
-
-        fin = open(args.input, "r", encoding="utf-8")
-        encoded_docs = pool.imap(encoder.encode, fin, args.chunk_size)
-    elif args.input.endswith(".jsonl.zst"):
-        print("Input is a jsonl zst file")
-
-        assert args.subset is None, f"subset argument set to: {args.subset}, but loading a zst jsonl file."
-
-        import tempfile
-
-        import zstandard
-
-        dctx = zstandard.ZstdDecompressor()
-        outfile = tempfile.TemporaryFile(suffix=args.input.rstrip(".zstd"))
-        with open(args.input, "rb") as infile:
-            dctx.copy_stream(infile, outfile)
-        outfile.seek(0)
-
-        encoded_docs = pool.imap(encoder.encode_jsonl_zstd, outfile, args.chunk_size)
-    else:
-        print("Input is not a jsonl file, will try to load from HF datasets")
-
-        ds = load_dataset(args.input, use_auth_token=True, streaming=True, split="train", data_dir=args.subset)
-        encoded_docs = pool.imap(encoder.encode_hf, ds, args.chunk_size)
+    encoded_docs = pool.imap(encoder.encode_hf, ds, args.chunk_size)
 
     builders = {
         key: MMapIndexedDatasetBuilder(

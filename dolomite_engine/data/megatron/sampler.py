@@ -45,3 +45,4 @@ class MegatronBatchSampler:
         if len(batch) > 0 and not self.drop_last:
             start_idx, end_idx = self._get_start_end_idx()
             yield batch[start_idx:end_idx]
+

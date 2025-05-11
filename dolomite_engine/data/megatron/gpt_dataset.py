@@ -290,7 +290,7 @@ class GPTDataset(MegatronDataset):
         sequence_length = getattr(self.config, "sequence_length")
 
         num_epochs = _get_num_epochs(num_tokens_per_epoch, sequence_length, self.num_samples)
-
+        print("num_epochs", num_tokens_per_epoch, sequence_length, self.num_samples)
         log_rank_0(logging.INFO, f"> Tokens per epoch: {num_tokens_per_epoch}")
         log_rank_0(logging.INFO, f"> Number of epochs: {num_epochs}")
 

@@ -184,13 +184,13 @@ class ModelWrapper(nn.Module):
 
         if self.model_name is None:
             if self.tokenizer.bos_token_id is not None:
-                assert self.tokenizer.bos_token_id == self.config.bos_token_id
+                assert self.tokenizer.bos_token_id == self.config.bos_token_id, "bos_token_id is %d according to tokenizer" % self.tokenizer.bos_token_id
 
             if self.tokenizer.eos_token_id is not None:
-                assert self.tokenizer.eos_token_id == self.config.eos_token_id
+                assert self.tokenizer.eos_token_id == self.config.eos_token_id, "eos_token_id is %d according to tokenizer" % self.tokenizer.eos_token_id
 
             if self.tokenizer.pad_token_id is not None:
-                assert self.tokenizer.pad_token_id == self.config.pad_token_id
+                assert self.tokenizer.pad_token_id == self.config.pad_token_id, "pad_token_id is %d according to tokenizer" % self.tokenizer.pad_token_id
 
         def _get_model(**extras):
             if self.model_name is None:
