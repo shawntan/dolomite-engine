@@ -13,16 +13,17 @@ from ...mixins.modeling_outputs import BaseModelOutputWithPast
 from ...modeling_utils import ParameterizedEmbedding, get_normalization_function
 from ...utils import convert_padding_free_lists_to_tensors, is_generation_cache_enabled
 from .config import SUTConfig
+from .layer import SUTBlock
 
 
 class SUTPreTrainedModel(PreTrainedModelMixin):
     config_class = SUTConfig
-    # layer_class = Block
-    # _no_split_modules = ["SUTBlock"]
+    layer_class = SUTBlock
+    _no_split_modules = ["SUTBlock"]
 
 
 class SUTModel(SUTPreTrainedModel, BaseModelMixin):
-    def _init_model(self, config: CommonConfig, **kwargs) -> None:
+    def _init_model(self, config: SUTConfig, **kwargs) -> None:
         self.embed_dim = config.hidden_size
         self.m_emb = config.m_emb
         self.initializer_range = config.initializer_range
@@ -35,7 +36,7 @@ class SUTModel(SUTPreTrainedModel, BaseModelMixin):
 
         self.sequence_mixer_block_types = [config.sequence_mixer_blocks[0].sequence_mixer_type]
         self.h = nn.ModuleList(
-            [self.layer_class(config, use_padding_free_transformer=self.use_padding_free_transformer, layer_idx=0)]
+            [SUTBlock(config, use_padding_free_transformer=self.use_padding_free_transformer, layer_idx=0)]
         )
         self.ln_f = get_normalization_function(
             config.normalization_function, self.embed_dim, eps=config.layer_norm_epsilon
@@ -45,6 +46,7 @@ class SUTModel(SUTPreTrainedModel, BaseModelMixin):
 
         self.position_embedding_type = config.position_embedding_type
         self._setup_positional_encoding()
+        self.num_iters = self.config.num_iters
 
         # Initialize weights and apply final processing
         self.post_init()
@@ -98,7 +100,7 @@ class SUTModel(SUTPreTrainedModel, BaseModelMixin):
         mamba_mask_computed = False
         block = self.h[0]
         sequence_mixer_type = self.sequence_mixer_block_types[0]
-        for i in range(40):
+        for i in range(self.num_iters):
             is_mamba_layer = sequence_mixer_type in ["mamba2", "rnn"]
 
             if is_mamba_layer and not mamba_mask_computed:
