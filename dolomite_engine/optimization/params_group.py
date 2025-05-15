@@ -13,6 +13,7 @@ from ..hf_models import (
     GPTDolomiteForCausalLM_TP,
     LadderResidualForCausalLM,
     LadderResidualForCausalLM_TP,
+    SUTForCausalLM,
     is_parameter_with_mup_learning_rate,
     is_parameter_with_no_weight_decay,
 )
