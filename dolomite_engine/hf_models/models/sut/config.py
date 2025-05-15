@@ -63,4 +63,4 @@ class SUTConfig(CommonConfig):
             **kwargs,
         )
         # self.num_layers = 1
-        self.num_iters = self.num_layers
+        self.num_iters = num_layers
