@@ -7,6 +7,7 @@ from transformers import DynamicCache
 from ....utils import ProcessGroupManager, divide_if_divisible
 from ...cache import GenerationCache
 from ...config import CommonConfig
+from ...loss import add_aux_loss
 from ...mixins import BaseModelMixin, PreTrainedModelMixin
 from ...mixins.dense import Block
 from ...mixins.modeling_outputs import BaseModelOutputWithPast
@@ -36,7 +37,7 @@ class SUTModel(SUTPreTrainedModel, BaseModelMixin):
 
         self.sequence_mixer_block_types = [config.sequence_mixer_blocks[0].sequence_mixer_type]
         self.h = nn.ModuleList(
-            [SUTBlock(config, use_padding_free_transformer=self.use_padding_free_transformer, layer_idx=0)]
+            [self.layer_class(config, use_padding_free_transformer=self.use_padding_free_transformer, layer_idx=0)]
         )
         self.ln_f = get_normalization_function(
             config.normalization_function, self.embed_dim, eps=config.layer_norm_epsilon
@@ -98,8 +99,9 @@ class SUTModel(SUTPreTrainedModel, BaseModelMixin):
 
         mamba_mask = None
         mamba_mask_computed = False
-        block = self.h[0]
+        block: SUTBlock = self.h[0]
         sequence_mixer_type = self.sequence_mixer_block_types[0]
+        acc_mlp_router_stats = None
         for i in range(self.num_iters):
             is_mamba_layer = sequence_mixer_type in ["mamba2", "rnn"]
 
@@ -107,15 +109,19 @@ class SUTModel(SUTPreTrainedModel, BaseModelMixin):
                 mamba_mask = self._get_mamba_mask(attention_mask, past_key_values)
                 mamba_mask_computed = True
 
-            hidden_states = block(
+            hidden_states, mlp_router_stats = block(
                 hidden_states,
                 past_key_values=past_key_values,
                 attention_mask=mamba_mask if is_mamba_layer else causal_mask,
                 rope_cos_sin=rope_cos_sin,
                 cu_seqlens=cu_seqlens,
                 max_seqlen=max_seqlen,
+                layer_idx=i,
             )
 
+            acc_mlp_router_stats = block.mlp_block._update_statistics(acc_mlp_router_stats, mlp_router_stats)
+
+        add_aux_loss(block.mlp_block._compute_switch_loss(acc_mlp_router_stats))
         hidden_states = self.ln_f(hidden_states)
 
         return BaseModelOutputWithPast(last_hidden_state=hidden_states, past_key_values=past_key_values)
