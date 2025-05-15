@@ -9,6 +9,7 @@ from ..hf_models import (
     GPTDolomiteForCausalLM_TP,
     LadderResidualForCausalLM,
     LadderResidualForCausalLM_TP,
+    SUTForCausalLM,
 )
 from ..hf_models.modeling_utils import MLP, RNN, Attention, Mamba2, MoE
 from ..model_wrapper import ModelWrapper
@@ -114,6 +115,7 @@ def get_mup_group_with_names(model: ModelWrapper, optimizer_class_args: dict) ->
             GPTDolomiteForCausalLM_TP,
             LadderResidualForCausalLM,
             LadderResidualForCausalLM_TP,
+            SUTForCausalLM,
         ),
     ), "mup is not supported with this model architecture"
 
