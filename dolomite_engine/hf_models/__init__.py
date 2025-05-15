@@ -26,6 +26,9 @@ from .models import (
     PaLMConfig,
     PaLMForCausalLM,
     PaLMModel,
+    SUTConfig,
+    SUTForCausalLM,
+    SUTModel,
     convert_gpt_dolomite_to_gpt_crosslayer,
 )
 from .parameter import (

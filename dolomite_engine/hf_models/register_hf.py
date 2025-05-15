@@ -22,6 +22,9 @@ from .models import (
     PaLMConfig,
     PaLMForCausalLM,
     PaLMModel,
+    SUTConfig,
+    SUTForCausalLM,
+    SUTModel,
 )
 
 
@@ -32,6 +35,7 @@ _CUSTOM_MODEL_REGISTRY = [
     (DesyncResidualConfig, DesyncResidualModel, DesyncResidualForCausalLM),
     (LadderResidualConfig, LadderResidualModel, LadderResidualForCausalLM),
     (PaLMConfig, PaLMModel, PaLMForCausalLM),
+    (SUTConfig, SUTModel, SUTForCausalLM),
 ]
 _CUSTOM_MODEL_TYPES = []
 _CUSTOM_MODEL_CLASSES = []

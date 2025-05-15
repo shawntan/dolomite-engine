@@ -13,8 +13,12 @@ from ..hf_models import (
     GPTDolomiteForCausalLM_TP,
     LadderResidualForCausalLM,
     LadderResidualForCausalLM_TP,
+<<<<<<< HEAD
     is_parameter_with_mup_learning_rate,
     is_parameter_with_no_weight_decay,
+=======
+    SUTForCausalLM,
+>>>>>>> 6a6a69d (Reformatted SUT)
 )
 from ..hf_models.modeling_utils import RNN, Attention, Mamba2, MoE
 from ..model_wrapper import ModelWrapper
@@ -88,6 +92,20 @@ def get_normal_group_with_names(model: ModelWrapper, optimizer_class_args: dict)
 
 
 def get_mup_group_with_names(model: ModelWrapper, optimizer_class_args: dict) -> list[_ParamsGroup]:
+<<<<<<< HEAD
+=======
+    assert isinstance(
+        model.model,
+        (
+            GPTDolomiteForCausalLM,
+            GPTDolomiteForCausalLM_TP,
+            LadderResidualForCausalLM,
+            LadderResidualForCausalLM_TP,
+            SUTForCausalLM,
+        ),
+    ), "mup is not supported with this model architecture"
+
+>>>>>>> 6a6a69d (Reformatted SUT)
     assert (
         model.config.init_method == "mup"
     ), "both init method for model and params group method for optimizer should be set to mup"
