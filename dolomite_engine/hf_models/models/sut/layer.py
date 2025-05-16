@@ -83,7 +83,8 @@ class SUTMoE(MoE):
         acc_freq, acc_probs, acc_lse_sq = acc_stats
         num_experts = acc_freq.size(0)
         if ProcessGroupManager.is_initialized() and ProcessGroupManager.get_data_parallel_world_size() > 1:
-            freq = all_reduce(freq, reduceOp="sum", group=ProcessGroupManager.get_data_parallel_group())
+            acc_freq = all_reduce(acc_freq, reduceOp="sum", group=ProcessGroupManager.get_data_parallel_group())
+            acc_probs = all_reduce(acc_probs, reduceOp="sum", group=ProcessGroupManager.get_data_parallel_group())
         switch_loss = (
             num_experts * (F.normalize(acc_probs, p=1, dim=0) * F.normalize(acc_freq.float(), p=1, dim=0)).sum()
         )
