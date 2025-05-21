@@ -12,16 +12,88 @@ from ...loss import add_aux_loss
 from ...mixins.dense.layer import Block
 from ...modeling_utils import get_mlp_block, get_normalization_function, get_sequence_mixer
 from ...modeling_utils.mlp_blocks.moe import MoE, compute_bincount
+
+from ...modeling_utils.linear import ParameterizedLinear
+from ...modeling_utils.mlp_blocks.mlp import _get_std_for_linear
+
 from .config import SUTConfig
 
-
-# from ...modeling_utils import get_attention_module, get_normalization_function
-# from ..gpt_dolomite.mlp import MLP
-# from ..moe_dolomite.moe.scatter import ScatterMoE
-# from .config import MoEDolomiteConfig
-
-
 class SUTMoE(MoE):
+
+    def __init__(
+        self,
+        hidden_size: int,
+        intermediate_size: int,
+        shared_intermediate_size: int,
+        num_experts: int,
+        num_experts_per_tok: int,
+        activation_function: str,
+        add_bias: bool,
+        dropout: float,
+        init_method: str,
+        initializer_range: float,
+        m_width: float,
+        num_layers: int,
+        use_padding_free_transformer: bool,
+    ) -> None:
+        super().__init__(
+            hidden_size,
+            intermediate_size,
+            shared_intermediate_size,
+            num_experts,
+            num_experts_per_tok,
+            activation_function,
+            add_bias,
+            dropout,
+            init_method,
+            initializer_range,
+            m_width,
+            num_layers,
+            use_padding_free_transformer,
+        )
+        std = _get_std_for_linear(initializer_range, init_method, m_width)
+        out_linear = ParameterizedLinear(
+            in_features=128,
+            out_features=num_experts,
+            bias=False,
+            std=std,
+        )
+        self.gate = nn.Sequential(
+            ParameterizedLinear(
+                in_features=self.hidden_size,
+                out_features=128,
+                bias=False,
+                std=std,
+            ),
+            nn.Tanh(),
+            nn.Dropout(0.2),
+            out_linear
+        )
+
+    def __get_topk(self, x: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+        orig_x = x
+        with torch.no_grad():
+            if self.training:
+                x = x + 0.05 * torch.randn_like(x)
+            _, indices = x.topk(self.top_k, dim=-1)
+        idxs = torch.arange(x.size(0), dtype=torch.long, device=orig_x.device)
+        x = orig_x[idxs[:, None], indices]
+        return x, indices
+
+    def _compute_routing_weights(self, hidden_states: torch.Tensor) -> tuple[torch.Tensor]:
+        # hidden_states -> (total_q, hidden_size)
+        router_logits = 0.025 * self.gate(hidden_states)
+        # router_logits -> (total_q, num_experts)
+
+        router_weights, selected_experts = self._get_topk(router_logits)
+        router_weights = F.softmax(router_weights.float(), dim=-1)
+
+        # we cast back to the input dtype
+        router_weights = router_weights.type_as(hidden_states)
+
+        return router_logits, router_weights, selected_experts
+
+
     def forward(self, hidden_states: torch.Tensor) -> torch.Tensor:
         if not self.use_padding_free_transformer:
             batch_size, sequence_length, _ = hidden_states.shape
@@ -37,20 +109,13 @@ class SUTMoE(MoE):
         else:
             hidden_states = moe_output + self._compute_shared_experts(hidden_states)
 
-        del moe_output
+        # del moe_output
 
         if not self.use_padding_free_transformer:
             hidden_states = hidden_states.reshape(batch_size, sequence_length, self.hidden_size)
 
         hidden_states = self.dropout(hidden_states)
-        # aux_loss = (
-        #     self._compute_switch_loss(
-        #         logits=router_logits, probs=torch.softmax(router_logits, dim=-1), topk_idxs=selected_experts
-        #     )
-        #     if self.training
-        #     else 0
-        # )
-        # add_aux_loss(aux_loss)
+
         return hidden_states, self._compute_router_statistics(router_logits, selected_experts)
 
     def _compute_router_statistics(self, logits: torch.Tensor, topk_idxs: torch.Tensor) -> torch.Tensor:
@@ -66,7 +131,7 @@ class SUTMoE(MoE):
         )
         sum_probs = probs.sum(0)
         sum_lse_sq = (torch.logsumexp(logits, dim=-1) ** 2).sum()
-        return sum_freq, sum_probs, sum_lse_sq
+        return sum_freq.to(torch.long), sum_probs, sum_lse_sq
 
     def _update_statistics(self, acc_stats, stats):
         if acc_stats is None:
@@ -74,7 +139,7 @@ class SUTMoE(MoE):
         else:
             acc_freq, acc_probs, acc_lse_sq = acc_stats
             sum_freq, sum_probs, sum_lse_sq = stats
-            acc_freq = acc_freq.to(torch.int32) + sum_freq.to(torch.int32)
+            acc_freq = acc_freq + sum_freq
             acc_probs = acc_probs + sum_probs
             acc_lse_sq = acc_lse_sq + sum_lse_sq
             return acc_freq, acc_probs, acc_lse_sq
@@ -86,7 +151,10 @@ class SUTMoE(MoE):
             acc_freq = all_reduce(acc_freq, reduceOp="sum", group=ProcessGroupManager.get_data_parallel_group())
             acc_probs = all_reduce(acc_probs, reduceOp="sum", group=ProcessGroupManager.get_data_parallel_group())
         switch_loss = (
-            num_experts * (F.normalize(acc_probs, p=1, dim=0) * F.normalize(acc_freq.float(), p=1, dim=0)).sum()
+            num_experts * (
+                F.normalize(acc_probs, p=1, dim=0) *
+                F.normalize(acc_freq.float(), p=1, dim=0)
+            ).sum()
         )
         z_loss = acc_lse_sq / acc_freq.sum()
         loss = switch_loss + 0.1 * z_loss
@@ -171,3 +239,31 @@ class SUTBlock(Block):
         hidden_states = hidden_states + residual
 
         return hidden_states, mlp_router_statistics
+
+    # def forward(
+    #     self,
+    #     hidden_states: torch.Tensor,
+    #     past_key_values: GenerationCache | None = None,
+    #     attention_mask: torch.Tensor | None = None,
+    #     rope_cos_sin: torch.Tensor | None = None,
+    #     cu_seqlens: torch.Tensor | None = None,
+    #     max_seqlen: int | None = None, layer_idx: int | None = None,
+    # ) -> torch.Tensor:
+    #     self.sequence_mixer.layer_idx = layer_idx
+    #     self.mlp_block.layer_idx = layer_idx
+
+    #     x = self.ln_1(hidden_states)
+    #     out = self._sequence_mixer_forward(
+    #         hidden_states=x,
+    #         past_key_values=past_key_values,
+    #         attention_mask=attention_mask,
+    #         rope_cos_sin=rope_cos_sin,
+    #         cu_seqlens=cu_seqlens,
+    #         max_seqlen=max_seqlen,
+    #     )
+    #     hidden_states = self.ln_2(out + x)
+    #     x = hidden_states
+    #     out, mlp_router_statistics = self.mlp_block(x)
+    #     hidden_states = out + x
+
+    #     return hidden_states, mlp_router_statistics
