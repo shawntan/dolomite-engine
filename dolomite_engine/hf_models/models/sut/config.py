@@ -39,7 +39,7 @@ class SUTConfig(CommonConfig):
             vocab_size,
             max_position_embeddings,
             hidden_size,
-            1,  # override num_layers
+            3,
             embedding_dropout,
             normalization_function,
             layer_norm_epsilon,
@@ -62,5 +62,5 @@ class SUTConfig(CommonConfig):
             rope_dim,
             **kwargs,
         )
-        # self.num_layers = 1
+        self.num_layers = 1
         self.num_iters = num_layers
