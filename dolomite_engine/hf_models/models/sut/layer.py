@@ -11,12 +11,73 @@ from ...cache import GenerationCache
 from ...loss import add_aux_loss
 from ...mixins.dense.layer import Block
 from ...modeling_utils import get_mlp_block, get_normalization_function, get_sequence_mixer
-from ...modeling_utils.mlp_blocks.moe import MoE, compute_bincount
-
 from ...modeling_utils.linear import ParameterizedLinear
 from ...modeling_utils.mlp_blocks.mlp import _get_std_for_linear
-
+from ...modeling_utils.mlp_blocks.moe import MoE, compute_bincount
+from ...modeling_utils.sequence_mixer_blocks.momha import MoAttention
 from .config import SUTConfig
+
+
+def _compute_router_statistics(logits: torch.Tensor, topk_idxs: torch.Tensor, is_hopper_or_newer_gpu) -> torch.Tensor:
+    probs = torch.softmax(logits, dim=-1)
+    logits = logits.view(-1, logits.size(-1))
+    probs = probs.view(-1, probs.size(-1))
+    num_experts = logits.size(1)
+
+    sum_freq = compute_bincount(
+        x=topk_idxs.flatten(),
+        size=num_experts,
+        use_continuous_count=is_hopper_or_newer_gpu and is_kernel_allowed(Kernel.continuous_count_cute),
+    )
+    sum_probs = probs.sum(0)
+    sum_lse_sq = (torch.logsumexp(logits, dim=-1) ** 2).sum()
+    return sum_freq.to(torch.long), sum_probs, sum_lse_sq
+
+
+def _update_statistics(acc_stats, stats):
+    if acc_stats is None:
+        return stats
+    else:
+        acc_freq, acc_probs, acc_lse_sq = acc_stats
+        sum_freq, sum_probs, sum_lse_sq = stats
+        acc_freq = acc_freq + sum_freq
+        acc_probs = acc_probs + sum_probs
+        acc_lse_sq = acc_lse_sq + sum_lse_sq
+        return acc_freq, acc_probs, acc_lse_sq
+
+
+def _compute_switch_loss(acc_stats):
+    acc_freq, acc_probs, acc_lse_sq = acc_stats
+    num_experts = acc_freq.size(0)
+    if ProcessGroupManager.is_initialized() and ProcessGroupManager.get_data_parallel_world_size() > 1:
+        acc_freq = all_reduce(acc_freq, reduceOp="sum", group=ProcessGroupManager.get_data_parallel_group())
+        acc_probs = all_reduce(acc_probs, reduceOp="sum", group=ProcessGroupManager.get_data_parallel_group())
+    switch_loss = num_experts * (F.normalize(acc_probs, p=1, dim=0) * F.normalize(acc_freq.float(), p=1, dim=0)).sum()
+    z_loss = acc_lse_sq / acc_freq.sum()
+    loss = switch_loss + 0.1 * z_loss
+    return loss.type_as(acc_lse_sq)
+
+
+class SUTMoAttention(MoAttention):
+    def forward(
+        self,
+        hidden_states: torch.Tensor,
+        past_key_values: GenerationCache | None = None,
+        attention_mask: torch.Tensor | None = None,
+        rope_cos_sin: torch.Tensor | None = None,
+        cu_seqlens: torch.Tensor | None = None,
+        max_seqlen: int | None = None,
+    ) -> torch.Tensor:
+        output, router_logits, selected_experts = self.compute_attn(
+            hidden_states,
+            past_key_values,
+            attention_mask,
+            rope_cos_sin,
+            cu_seqlens,
+            max_seqlen,
+        )
+        return output, _compute_router_statistics(router_logits, selected_experts, self.is_hopper_or_newer_gpu)
+
 
 class SUTMoE(MoE):
 
@@ -67,7 +128,7 @@ class SUTMoE(MoE):
             ),
             nn.Tanh(),
             nn.Dropout(0.2),
-            out_linear
+            out_linear,
         )
 
     def __get_topk(self, x: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
@@ -93,7 +154,6 @@ class SUTMoE(MoE):
 
         return router_logits, router_weights, selected_experts
 
-
     def forward(self, hidden_states: torch.Tensor) -> torch.Tensor:
         if not self.use_padding_free_transformer:
             batch_size, sequence_length, _ = hidden_states.shape
@@ -116,49 +176,7 @@ class SUTMoE(MoE):
 
         hidden_states = self.dropout(hidden_states)
 
-        return hidden_states, self._compute_router_statistics(router_logits, selected_experts)
-
-    def _compute_router_statistics(self, logits: torch.Tensor, topk_idxs: torch.Tensor) -> torch.Tensor:
-        probs = torch.softmax(logits, dim=-1)
-        logits = logits.view(-1, logits.size(-1))
-        probs = probs.view(-1, probs.size(-1))
-        num_experts = logits.size(1)
-
-        sum_freq = compute_bincount(
-            x=topk_idxs.flatten(),
-            size=num_experts,
-            use_continuous_count=self.is_hopper_or_newer_gpu and is_kernel_allowed(Kernel.continuous_count_cute),
-        )
-        sum_probs = probs.sum(0)
-        sum_lse_sq = (torch.logsumexp(logits, dim=-1) ** 2).sum()
-        return sum_freq.to(torch.long), sum_probs, sum_lse_sq
-
-    def _update_statistics(self, acc_stats, stats):
-        if acc_stats is None:
-            return stats
-        else:
-            acc_freq, acc_probs, acc_lse_sq = acc_stats
-            sum_freq, sum_probs, sum_lse_sq = stats
-            acc_freq = acc_freq + sum_freq
-            acc_probs = acc_probs + sum_probs
-            acc_lse_sq = acc_lse_sq + sum_lse_sq
-            return acc_freq, acc_probs, acc_lse_sq
-
-    def _compute_switch_loss(self, acc_stats):
-        acc_freq, acc_probs, acc_lse_sq = acc_stats
-        num_experts = acc_freq.size(0)
-        if ProcessGroupManager.is_initialized() and ProcessGroupManager.get_data_parallel_world_size() > 1:
-            acc_freq = all_reduce(acc_freq, reduceOp="sum", group=ProcessGroupManager.get_data_parallel_group())
-            acc_probs = all_reduce(acc_probs, reduceOp="sum", group=ProcessGroupManager.get_data_parallel_group())
-        switch_loss = (
-            num_experts * (
-                F.normalize(acc_probs, p=1, dim=0) *
-                F.normalize(acc_freq.float(), p=1, dim=0)
-            ).sum()
-        )
-        z_loss = acc_lse_sq / acc_freq.sum()
-        loss = switch_loss + 0.1 * z_loss
-        return loss.type_as(acc_lse_sq)
+        return hidden_states, _compute_router_statistics(router_logits, selected_experts, self.is_hopper_or_newer_gpu)
 
 
 class SUTBlock(Block):
@@ -172,19 +190,44 @@ class SUTBlock(Block):
         self.ln_1 = get_normalization_function(
             config.normalization_function, hidden_size, eps=config.layer_norm_epsilon
         )
-        self.sequence_mixer = get_sequence_mixer(config, True, use_padding_free_transformer, layer_idx)
+
+        # sequence_mixer_type = config.sequence_mixer_blocks[layer_idx].sequence_mixer_type
+        seq_block = config.sequence_mixer_blocks[layer_idx]
+        sequence_mixer_kwargs = dict(
+            hidden_size=config.hidden_size,
+            num_attention_heads=seq_block.num_attention_heads,
+            num_key_value_heads=seq_block.num_key_value_heads,
+            attention_multiplier=seq_block.attention_multiplier,
+            position_embedding_type=config.position_embedding_type,
+            add_bias=seq_block.add_bias,
+            dropout=seq_block.dropout,
+            init_method=config.init_method,
+            initializer_range=config.initializer_range,
+            m_width=config.m_width,
+            num_layers=config.num_layers,
+            causal=True,
+            layer_idx=layer_idx,
+        )
+
+        self.sequence_mixer = SUTMoAttention(
+            **sequence_mixer_kwargs,
+            num_experts=seq_block.num_experts,
+            softmax_dropout=seq_block.softmax_dropout,
+            use_padding_free_transformer=use_padding_free_transformer,
+        )
+
         self.ln_2 = get_normalization_function(
             config.normalization_function, hidden_size, eps=config.layer_norm_epsilon
         )
 
-        block = config.mlp_blocks[layer_idx]
+        seq_block = config.mlp_blocks[layer_idx]
 
         kwargs = dict(
             hidden_size=config.hidden_size,
-            intermediate_size=block.intermediate_size,
-            activation_function=block.activation_function,
-            add_bias=block.add_bias,
-            dropout=block.dropout,
+            intermediate_size=seq_block.intermediate_size,
+            activation_function=seq_block.activation_function,
+            add_bias=seq_block.add_bias,
+            dropout=seq_block.dropout,
             init_method=config.init_method,
             initializer_range=config.initializer_range,
             m_width=config.m_width,
@@ -193,9 +236,9 @@ class SUTBlock(Block):
 
         self.mlp_block = SUTMoE(
             **kwargs,
-            shared_intermediate_size=block.shared_intermediate_size,
-            num_experts=block.num_experts,
-            num_experts_per_tok=block.num_experts_per_tok,
+            shared_intermediate_size=seq_block.shared_intermediate_size,
+            num_experts=seq_block.num_experts,
+            num_experts_per_tok=seq_block.num_experts_per_tok,
             use_padding_free_transformer=use_padding_free_transformer,
         )
 
@@ -214,7 +257,7 @@ class SUTBlock(Block):
         residual = hidden_states
         hidden_states = self.ln_1(hidden_states)
 
-        hidden_states = self._sequence_mixer_forward(
+        hidden_states, attn_router_statistics = self._sequence_mixer_forward(
             hidden_states=hidden_states,
             past_key_values=past_key_values,
             attention_mask=attention_mask,
@@ -238,7 +281,7 @@ class SUTBlock(Block):
 
         hidden_states = hidden_states + residual
 
-        return hidden_states, mlp_router_statistics
+        return hidden_states, mlp_router_statistics, attn_router_statistics
 
     # def forward(
     #     self,

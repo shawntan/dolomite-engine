@@ -13,6 +13,7 @@ from .sequence_mixer import (
     _CausalConvolution,
     _GRUArgs,
     _Mamba2Args,
+    _MoAttentionArgs,
     _MultiHeadLatentAttentionArgs,
     _RNNArgs,
     _SoftmaxAttentionArgs,
@@ -70,6 +71,7 @@ _SEQUENCE_MIXER_CONFIG_CLASSES = {
     "rnn": _RNNArgs,
     "stickbreaking_attention": _StickbreakingAttentionArgs,
     "softmax_attention": _SoftmaxAttentionArgs,
+    "mo_attention": _MoAttentionArgs,
 }
 
 _MLP_CONFIG_CLASSES = {"MLP": _MLPArgs, "MoE": _MoEArgs}
@@ -186,7 +188,6 @@ class CommonConfig(PretrainedConfig):
 
         if expected_value is not None:
             assert value == expected_value, f"{value} {expected_value}"
-
         assert all([_get(block, key_block) == value for block in blocks])
 
         return value
@@ -198,6 +199,7 @@ class CommonConfig(PretrainedConfig):
         sequence_mixer_blocks: list[
             _CausalConvolution
             | _GRUArgs
+            | _MoAttentionArgs
             | _Mamba2Args
             | _MultiHeadLatentAttentionArgs
             | _RNNArgs
