@@ -2,6 +2,7 @@ from ...config import CommonConfig
 from .flash_attention_utils import flash_attention
 from .gru import GRU
 from .mamba2 import Mamba2
+from .momha import MoAttention
 from .multihead_latent_attention import MultiHeadLatentAttention
 from .rnn import RNN
 from .softmax_attention import (
@@ -120,6 +121,14 @@ def get_sequence_mixer(
                 softmax_dropout=block.softmax_dropout,
                 use_padding_free_transformer=use_padding_free_transformer,
             )
+        elif sequence_mixer_type == "mo_attention":
+            return MoAttention(
+                **sequence_mixer_kwargs,
+                num_experts=block.num_experts,
+                softmax_dropout=block.softmax_dropout,
+                use_padding_free_transformer=use_padding_free_transformer,
+            )
+
         elif sequence_mixer_type == "stickbreaking_attention":
             if use_padding_free_transformer:
                 return PaddingFreeSBAttention(**sequence_mixer_kwargs)
