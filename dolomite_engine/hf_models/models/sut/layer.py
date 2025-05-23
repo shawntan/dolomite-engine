@@ -59,6 +59,83 @@ def _compute_switch_loss(acc_stats):
 
 
 class SUTMoAttention(MoAttention):
+    def __init__(
+        self,
+        num_experts: int,
+        hidden_size: int,
+        num_attention_heads: int,
+        num_key_value_heads: int,
+        attention_multiplier: float,
+        position_embedding_type: str,
+        add_bias: bool,
+        softmax_dropout: float,
+        dropout: float,
+        init_method: str,
+        initializer_range: float,
+        m_width: float,
+        num_layers: int,
+        causal: bool,
+        layer_idx: int,
+        use_padding_free_transformer: bool,
+    ) -> None:
+        super().__init__(
+            num_experts,
+            hidden_size,
+            num_attention_heads,
+            num_key_value_heads,
+            attention_multiplier,
+            position_embedding_type,
+            add_bias,
+            softmax_dropout,
+            dropout,
+            init_method,
+            initializer_range,
+            m_width,
+            num_layers,
+            causal,
+            layer_idx,
+            use_padding_free_transformer,
+        )
+        std = _get_std_for_linear(initializer_range, init_method, m_width)
+        out_linear = ParameterizedLinear(
+            in_features=128,
+            out_features=num_experts,
+            bias=False,
+            std=std,
+        )
+        self.gate = nn.Sequential(
+            ParameterizedLinear(
+                in_features=self.hidden_size,
+                out_features=128,
+                bias=False,
+                std=std,
+            ),
+            nn.Tanh(),
+            nn.Dropout(0.2),
+            out_linear,
+        )
+    # def _get_topk(self, x: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+    #     orig_x = x
+    #     with torch.no_grad():
+    #         if self.training:
+    #             x = x + 0.05 * torch.randn_like(x)
+    #         _, indices = x.topk(self.top_k, dim=-1)
+    #     idxs = torch.arange(x.size(0), dtype=torch.long, device=orig_x.device)
+    #     x = orig_x[idxs[:, None], indices]
+    #     return x, indices
+
+
+    def _compute_routing_weights(self, hidden_states: torch.Tensor) -> tuple[torch.Tensor]:
+        # hidden_states -> (total_q, hidden_size)
+        router_logits = 0.025 * self.gate(hidden_states)
+        # router_logits -> (total_q, num_experts)
+        router_weights, selected_experts = self._get_topk(router_logits)
+        router_weights = F.softmax(router_weights.float(), dim=-1)
+        # we cast back to the input dtype
+        router_weights = router_weights.type_as(hidden_states)
+        return router_logits, router_weights, selected_experts
+
+
     def forward(
         self,
         hidden_states: torch.Tensor,
@@ -131,15 +208,15 @@ class SUTMoE(MoE):
             out_linear,
         )
 
-    def __get_topk(self, x: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
-        orig_x = x
-        with torch.no_grad():
-            if self.training:
-                x = x + 0.05 * torch.randn_like(x)
-            _, indices = x.topk(self.top_k, dim=-1)
-        idxs = torch.arange(x.size(0), dtype=torch.long, device=orig_x.device)
-        x = orig_x[idxs[:, None], indices]
-        return x, indices
+    # def _get_topk(self, x: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+    #     orig_x = x
+    #     with torch.no_grad():
+    #         if self.training:
+    #             x = x + 0.05 * torch.randn_like(x)
+    #         _, indices = x.topk(self.top_k, dim=-1)
+    #     idxs = torch.arange(x.size(0), dtype=torch.long, device=orig_x.device)
+    #     x = orig_x[idxs[:, None], indices]
+    #     return x, indices
 
     def _compute_routing_weights(self, hidden_states: torch.Tensor) -> tuple[torch.Tensor]:
         # hidden_states -> (total_q, hidden_size)
