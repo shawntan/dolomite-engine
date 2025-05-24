@@ -61,7 +61,7 @@ class GRU(nn.Module):
             std /= math.sqrt(m_width)
         self.output_projection = ParameterizedLinear(self.state_size, self.output_size, bias=False, std=std)
 
-        self.factor = 1 / math.sqrt(self.input_size + self.state_head_dim)
+        self.factor = 4 / math.sqrt(self.input_size + self.state_head_dim)
         self.reset_parameters()
 
         mark_parameter_as_mup_learning_rate(self.input_projection.weight)
@@ -137,4 +137,4 @@ class GRU(nn.Module):
         nn.init.normal_(self.state_weight, std=self.state_weight_std)
 
     def extra_repr(self) -> str:
-        return f"gradient_clipping = {self.gradient_clipping}\nweight_shape: {str(self.state_weight.shape)}"
+        return f"gradient_clipping = {self.gradient_clipping},\nweight_shape= {str(self.weight.shape)},\nfactor={self.factor}"

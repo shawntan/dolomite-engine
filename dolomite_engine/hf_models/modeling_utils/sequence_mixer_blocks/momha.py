@@ -179,6 +179,11 @@ class MoAttention(Attention):
 
         return query, key, value
 
+
+    def extra_repr(self) -> str:
+        return f"num_attention_heads={self.num_attention_heads},\nnum_key_value_heads={self.num_key_value_heads}"
+
+
     def compute_attn(
         self,
         hidden_states: torch.Tensor,
