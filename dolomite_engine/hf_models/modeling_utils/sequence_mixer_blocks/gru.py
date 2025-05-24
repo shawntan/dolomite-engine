@@ -12,6 +12,7 @@ from ....kernels import is_kernel_allowed
 from ....utils import divide_if_divisible, is_cute_kernels_available
 from ...cache import GenerationCache
 from ...parameter import mark_parameter_as_mup_learning_rate, mark_parameter_as_no_weight_decay
+from ..convolution import ParameterizedConv1d
 from ..linear import ParameterizedLinear
 from .packing import compute_cu_seqlens_and_max_seqlen_from_attention_mask, pack_sequence, unpack_sequence
 from .rnn import RNN
@@ -53,7 +54,19 @@ class GRU(nn.Module):
             std /= math.sqrt(m_width)
         self.state_weight_std = std
 
-        self.input_projection = ParameterizedLinear(self.input_size, 3 * self.state_size, bias=add_bias, std=std)
+        self.input_projection = nn.Sequential(
+            ParameterizedLinear(self.input_size, self.input_size, bias=add_bias, std=std), nn.Tanh()
+        )
+        self.head_projection = ParameterizedConv1d(
+            in_channels=self.input_size,
+            out_channels=3 * self.state_size,
+            kernel_size=1,
+            groups=self.num_heads,
+            bias=add_bias,
+            std=std,
+        )
+
+        # self.input_projection = ParameterizedLinear(self.input_size, 3 * self.state_size, bias=add_bias, std=std)
         self.state_weight = nn.Parameter(torch.empty(3 * self.num_heads, self.state_head_dim, self.state_head_dim))
 
         std = initializer_range / math.sqrt(2 * num_layers)
@@ -61,11 +74,14 @@ class GRU(nn.Module):
             std /= math.sqrt(m_width)
         self.output_projection = ParameterizedLinear(self.state_size, self.output_size, bias=False, std=std)
 
-        self.factor = 4 / math.sqrt(self.input_size + self.state_head_dim)
+        weight_scale = math.sqrt(4096)
+        self.state_weight.data = weight_scale * self.state_weight.data
+        self.factor = 4 / (weight_scale * math.sqrt(self.input_size + self.state_head_dim))
+
         self.reset_parameters()
 
         mark_parameter_as_mup_learning_rate(self.input_projection.weight)
-        mark_parameter_as_mup_learning_rate(self.state_weight)
+        # mark_parameter_as_mup_learning_rate(self.state_weight)
         mark_parameter_as_mup_learning_rate(self.output_projection.weight)
 
         mark_parameter_as_no_weight_decay(self.state_weight)
@@ -92,8 +108,16 @@ class GRU(nn.Module):
                 input = pack_sequence(inputs=input, cu_seqlens=cu_seqlens)
 
         input = self.input_projection(input)
+        print(input.size())
+        input = self.head_projection(input)
 
         input = input * self.factor
+
+        def fun(x):
+            print(torch.abs(x).sum(), torch.abs(x).max())
+            return x
+
+        self.state_weight.register_post_accumulate_grad_hook(fun)
         weight = self.state_weight * self.factor
 
         input, forget_input, reset_input = input.chunk(3, dim=-1)
