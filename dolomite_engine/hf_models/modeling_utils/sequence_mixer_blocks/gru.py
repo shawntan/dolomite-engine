@@ -54,9 +54,9 @@ class GRU(nn.Module):
             std /= math.sqrt(m_width)
         self.state_weight_std = std
 
-        self.input_projection = nn.Sequential(
-            ParameterizedLinear(self.input_size, self.input_size, bias=add_bias, std=std), nn.Tanh()
-        )
+        self.input_projection = ParameterizedLinear(self.input_size, self.input_size, bias=add_bias, std=std)
+
+        self.head_activation = nn.Tanh()
         self.head_projection = ParameterizedConv1d(
             in_channels=self.input_size,
             out_channels=3 * self.state_size,
@@ -72,6 +72,16 @@ class GRU(nn.Module):
         std = initializer_range / math.sqrt(2 * num_layers)
         if init_method == "mup":
             std /= math.sqrt(m_width)
+        self.output_head_projection = ParameterizedConv1d(
+            in_channels=self.state_size,
+            out_channels=self.input_size,
+            kernel_size=1,
+            groups=self.num_heads,
+            bias=add_bias,
+            std=std,
+        )
+        self.ln_output_head = nn.GroupNorm(num_groups=self.num_heads, num_channels=self.input_size)
+
         self.output_projection = ParameterizedLinear(self.state_size, self.output_size, bias=False, std=std)
 
         # weight_scale = math.sqrt(4096)
@@ -81,7 +91,7 @@ class GRU(nn.Module):
 
         self.reset_parameters()
 
-        mark_parameter_as_mup_learning_rate(self.input_projection[0].weight)
+        mark_parameter_as_mup_learning_rate(self.input_projection.weight)
         mark_parameter_as_mup_learning_rate(self.state_weight)
         mark_parameter_as_mup_learning_rate(self.output_projection.weight)
 
@@ -108,9 +118,11 @@ class GRU(nn.Module):
                 cu_seqlens, max_seqlen = compute_cu_seqlens_and_max_seqlen_from_attention_mask(attention_mask)
                 input = pack_sequence(inputs=input, cu_seqlens=cu_seqlens)
 
-
         input = self.input_projection(input)
-        input = self.head_projection(input.transpose(1, 2)).transpose(1, 2)
+        input = self.head_activation(input)
+        input = self.head_projection(input.transpose(1, 2))
+        residual = input
+        input = input.transpose(1, 2)
 
         input = input * self.factor
 
@@ -141,6 +153,8 @@ class GRU(nn.Module):
             cu_seqlens=cu_seqlens,
             max_seqlen=max_seqlen,
         )
+        input = self.output_head_projection(input.transpose(1, 2))
+        input = self.ln_output_head(input + residual).transpose(1, 2)
 
         if not self.use_padding_free_transformer and attention_mask is not None:
             input = unpack_sequence(
