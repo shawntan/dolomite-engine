@@ -74,14 +74,15 @@ class GRU(nn.Module):
             std /= math.sqrt(m_width)
         self.output_projection = ParameterizedLinear(self.state_size, self.output_size, bias=False, std=std)
 
-        weight_scale = math.sqrt(4096)
-        self.state_weight.data = weight_scale * self.state_weight.data
-        self.factor = 4 / (weight_scale * math.sqrt(self.input_size + self.state_head_dim))
+        # weight_scale = math.sqrt(4096)
+        # self.state_weight.data = weight_scale * self.state_weight.data
+        # self.factor = 4 / math.sqrt(self.input_size +l self.state_head_dim)
+        self.factor = 8 / math.sqrt(2 * self.state_head_dim)
 
         self.reset_parameters()
 
-        mark_parameter_as_mup_learning_rate(self.input_projection.weight)
-        # mark_parameter_as_mup_learning_rate(self.state_weight)
+        mark_parameter_as_mup_learning_rate(self.input_projection[0].weight)
+        mark_parameter_as_mup_learning_rate(self.state_weight)
         mark_parameter_as_mup_learning_rate(self.output_projection.weight)
 
         mark_parameter_as_no_weight_decay(self.state_weight)
@@ -107,17 +108,16 @@ class GRU(nn.Module):
                 cu_seqlens, max_seqlen = compute_cu_seqlens_and_max_seqlen_from_attention_mask(attention_mask)
                 input = pack_sequence(inputs=input, cu_seqlens=cu_seqlens)
 
+
         input = self.input_projection(input)
-        print(input.size())
-        input = self.head_projection(input)
+        input = self.head_projection(input.transpose(1, 2)).transpose(1, 2)
 
         input = input * self.factor
 
-        def fun(x):
-            print(torch.abs(x).sum(), torch.abs(x).max())
-            return x
-
-        self.state_weight.register_post_accumulate_grad_hook(fun)
+        # def fun(x):
+        #     print(torch.abs(x).sum(), torch.abs(x).max())
+        #     return x
+        # self.state_weight.register_post_accumulate_grad_hook(fun)
         weight = self.state_weight * self.factor
 
         input, forget_input, reset_input = input.chunk(3, dim=-1)
