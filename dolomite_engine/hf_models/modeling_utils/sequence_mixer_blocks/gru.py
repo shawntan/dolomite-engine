@@ -121,7 +121,6 @@ class GRU(nn.Module):
         input = self.input_projection(input)
         input = self.head_activation(input)
         input = self.head_projection(input.transpose(1, 2))
-        residual = input
         input = input.transpose(1, 2)
 
         input = input * self.factor
@@ -133,6 +132,7 @@ class GRU(nn.Module):
         weight = self.state_weight * self.factor
 
         input, forget_input, reset_input = input.chunk(3, dim=-1)
+        residual = torch.tanh(input)
         weight, forget_weight, reset_weight = weight.chunk(3, dim=0)
 
         input, forget_input, reset_input = [
@@ -153,8 +153,6 @@ class GRU(nn.Module):
             cu_seqlens=cu_seqlens,
             max_seqlen=max_seqlen,
         )
-        input = self.output_head_projection(input.transpose(1, 2))
-        input = self.ln_output_head(input + residual).transpose(1, 2)
 
         if not self.use_padding_free_transformer and attention_mask is not None:
             input = unpack_sequence(
@@ -166,6 +164,10 @@ class GRU(nn.Module):
             cache_params.update(state=input_state, num_tokens_added=input.size(1), layer_idx=self.layer_idx)
 
         input = input.view(*input.size()[:-2], -1)
+
+        input = self.output_head_projection((input + residual).transpose(1, 2))
+        input = self.ln_output_head(input).transpose(1, 2)
+
         input = self.output_projection(input)
 
         return input
