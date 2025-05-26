@@ -124,15 +124,9 @@ class GRU(nn.Module):
         input = input.transpose(1, 2)
 
         input = input * self.factor
-
-        # def fun(x):
-        #     print(torch.abs(x).sum(), torch.abs(x).max())
-        #     return x
-        # self.state_weight.register_post_accumulate_grad_hook(fun)
         weight = self.state_weight * self.factor
 
         input, forget_input, reset_input = input.chunk(3, dim=-1)
-        # residual = torch.tanh(input)
         weight, forget_weight, reset_weight = weight.chunk(3, dim=0)
 
         input, forget_input, reset_input = [
@@ -165,7 +159,6 @@ class GRU(nn.Module):
 
         input = input.view(*input.size()[:-2], -1)
 
-        # input = self.output_head_projection((input + residual).transpose(1, 2))
         input = self.output_head_projection(input.transpose(1, 2))
         input = self.ln_output_head(input).transpose(1, 2)
 
