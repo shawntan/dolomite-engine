@@ -12,7 +12,6 @@ from ..hf_models import (
     is_parameter_with_mup_learning_rate,
     is_parameter_with_no_weight_decay,
 )
-from ..hf_models.modeling_utils import RNN, Attention, Mamba2, MoE
 from ..model_wrapper import ModelWrapper
 from ..utils import BaseArgs, log_rank_0
 
