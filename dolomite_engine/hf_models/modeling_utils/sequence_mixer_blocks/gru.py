@@ -95,7 +95,7 @@ class GRU(nn.Module):
         mark_parameter_as_mup_learning_rate(self.state_weight)
         mark_parameter_as_mup_learning_rate(self.output_projection.weight)
 
-        mark_parameter_as_no_weight_decay(self.state_weight)
+        # mark_parameter_as_no_weight_decay(self.state_weight)
 
     def forward(
         self,
@@ -132,7 +132,7 @@ class GRU(nn.Module):
         weight = self.state_weight * self.factor
 
         input, forget_input, reset_input = input.chunk(3, dim=-1)
-        residual = torch.tanh(input)
+        # residual = torch.tanh(input)
         weight, forget_weight, reset_weight = weight.chunk(3, dim=0)
 
         input, forget_input, reset_input = [
@@ -165,7 +165,8 @@ class GRU(nn.Module):
 
         input = input.view(*input.size()[:-2], -1)
 
-        input = self.output_head_projection((input + residual).transpose(1, 2))
+        # input = self.output_head_projection((input + residual).transpose(1, 2))
+        input = self.output_head_projection(input.transpose(1, 2))
         input = self.ln_output_head(input).transpose(1, 2)
 
         input = self.output_projection(input)
