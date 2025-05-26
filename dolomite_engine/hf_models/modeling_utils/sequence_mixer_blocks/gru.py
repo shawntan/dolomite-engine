@@ -66,7 +66,6 @@ class GRU(nn.Module):
             std=std,
         )
 
-        # self.input_projection = ParameterizedLinear(self.input_size, 3 * self.state_size, bias=add_bias, std=std)
         self.state_weight = nn.Parameter(torch.empty(3 * self.num_heads, self.state_head_dim, self.state_head_dim))
 
         std = initializer_range / math.sqrt(2 * num_layers)
@@ -84,9 +83,6 @@ class GRU(nn.Module):
 
         self.output_projection = ParameterizedLinear(self.state_size, self.output_size, bias=False, std=std)
 
-        # weight_scale = math.sqrt(4096)
-        # self.state_weight.data = weight_scale * self.state_weight.data
-        # self.factor = 4 / math.sqrt(self.input_size +l self.state_head_dim)
         self.factor = 8 / math.sqrt(2 * self.state_head_dim)
 
         self.reset_parameters()
