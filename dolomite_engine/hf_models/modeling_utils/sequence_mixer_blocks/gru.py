@@ -14,12 +14,54 @@ from ...cache import GenerationCache
 from ...parameter import mark_parameter_as_mup_learning_rate, mark_parameter_as_no_weight_decay
 from ..convolution import ParameterizedConv1d
 from ..linear import ParameterizedLinear
+from .causal_convolution import causal_convolution
 from .packing import compute_cu_seqlens_and_max_seqlen_from_attention_mask, pack_sequence, unpack_sequence
 from .rnn import RNN
 
 
 if is_cute_kernels_available():
     from cute_kernels import gru_cute, gru_torch
+
+
+class GroupedLinear(nn.Module):
+    def __init__(
+        self,
+        in_channels: int,
+        out_channels: int,
+        groups: int = 1,
+        bias: bool = True,
+        device=None,
+        dtype=None,
+        std: float | None = None,
+    ) -> None:
+        self.std = std
+        super().__init__()
+        self.in_channels = in_channels
+        self.out_channels = out_channels
+        self.groups = groups
+        self.in_dim = divide_if_divisible(in_channels, groups)
+        self.out_dim = divide_if_divisible(out_channels, groups)
+
+        self.weight = nn.Parameter(torch.empty(self.groups, self.in_channels, self.out_channels))
+        self.reset_parameters()
+
+        # mark_parameter_as_no_weight_decay(self.bias)
+
+    @torch.no_grad()
+    def reset_parameters(self) -> None:
+        if self.std is None:
+            super().reset_parameters()
+        else:
+            nn.init.normal_(self.weight, mean=0, std=self.std)
+            if hasattr(self, "bias") and self.bias is not None:
+                self.bias.zero_()
+
+    def forward(self, x):
+        x_size = x.size()
+        x = x.view(-1, self.groups, self.in_dim)
+        y = torch.matmul(x[:, :, None], self.weight)
+        y = y.view(*(x_size[:-1]), self.out_channels)
+        return y
 
 
 class GRU(nn.Module):
@@ -57,12 +99,18 @@ class GRU(nn.Module):
         self.input_projection = ParameterizedLinear(self.input_size, self.input_size, bias=add_bias, std=std)
 
         self.head_activation = nn.Tanh()
-        self.head_projection = ParameterizedConv1d(
+        # self.head_projection = ParameterizedConv1d(
+        #     in_channels=self.input_size,
+        #     out_channels=3 * self.state_size,
+        #     kernel_size=1,
+        #     groups=self.num_heads,
+        #     bias=add_bias,
+        #     std=std,
+        # )
+        self.head_projection = GroupedLinear(
             in_channels=self.input_size,
             out_channels=3 * self.state_size,
-            kernel_size=1,
             groups=self.num_heads,
-            bias=add_bias,
             std=std,
         )
 
@@ -116,8 +164,7 @@ class GRU(nn.Module):
 
         input = self.input_projection(input)
         input = self.head_activation(input)
-        input = self.head_projection(input.transpose(1, 2))
-        input = input.transpose(1, 2)
+        input = self.head_projection(input)
 
         input = input * self.factor
         weight = self.state_weight * self.factor
