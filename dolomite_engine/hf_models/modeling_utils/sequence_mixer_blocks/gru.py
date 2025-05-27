@@ -12,6 +12,7 @@ from ....kernels import is_kernel_allowed
 from ....utils import divide_if_divisible, is_cute_kernels_available
 from ...cache import GenerationCache
 from ...parameter import mark_parameter_as_mup_learning_rate, mark_parameter_as_no_weight_decay
+from ..activations import get_activation_function, is_glu
 from ..convolution import ParameterizedConv1d
 from ..linear import ParameterizedLinear
 from .causal_convolution import causal_convolution
@@ -39,10 +40,10 @@ class GroupedLinear(nn.Module):
         self.in_channels = in_channels
         self.out_channels = out_channels
         self.groups = groups
-        self.in_dim = divide_if_divisible(in_channels, groups, "in_channels must be divisible by groups")
-        self.out_dim = divide_if_divisible(out_channels, groups, "out_channels must be divisible by groups")
+        self.in_dim = divide_if_divisible(in_channels, groups)
+        self.out_dim = divide_if_divisible(out_channels, groups)
 
-        self.weight = nn.Parameter(torch.empty(self.groups, self.in_dim, self.out_dim))
+        self.weight = nn.Parameter(torch.empty(self.groups, self.in_channels, self.out_channels))
         self.reset_parameters()
 
         # mark_parameter_as_no_weight_decay(self.bias)
@@ -59,10 +60,8 @@ class GroupedLinear(nn.Module):
     def forward(self, x):
         x_size = x.size()
         x = x.view(-1, self.groups, self.in_dim)
-        x = x.transpose(1, 0)
-        y = torch.bmm(x, self.weight)
-        y = y.transpose(1, 0)
-        y = y.reshape(*(x_size[:-1]), self.out_channels)
+        y = torch.matmul(x[:, :, None], self.weight)
+        y = y.view(*(x_size[:-1]), self.out_channels)
         return y
 
 
@@ -81,6 +80,8 @@ class GRU(nn.Module):
         num_layers: int,
         layer_idx: int,
         use_padding_free_transformer: bool,
+        head_activation: str = "tanh",
+        factor: float = None,
     ) -> None:
         super().__init__()
 
@@ -100,8 +101,7 @@ class GRU(nn.Module):
 
         self.input_projection = ParameterizedLinear(self.input_size, self.input_size, bias=add_bias, std=std)
 
-        self.head_activation = nn.Tanh()
-
+        self.head_activation = get_activation_function("tanh")
         # self.head_projection = ParameterizedConv1d(
         #     in_channels=self.input_size,
         #     out_channels=3 * self.state_size,
@@ -122,26 +122,22 @@ class GRU(nn.Module):
         std = initializer_range / math.sqrt(2 * num_layers)
         if init_method == "mup":
             std /= math.sqrt(m_width)
-        # self.output_head_projection = ParameterizedConv1d(
-        #     in_channels=self.state_size,
-        #     out_channels=self.input_size,
-        #     kernel_size=1,
-        #     groups=self.num_heads,
-        #     bias=add_bias,
-        #     std=std,
-        # )
-        self.output_head_projection = GroupedLinear(
+        self.output_head_projection = ParameterizedConv1d(
             in_channels=self.state_size,
             out_channels=self.input_size,
+            kernel_size=1,
             groups=self.num_heads,
+            bias=add_bias,
             std=std,
         )
-
         self.ln_output_head = nn.GroupNorm(num_groups=self.num_heads, num_channels=self.input_size)
 
         self.output_projection = ParameterizedLinear(self.state_size, self.output_size, bias=False, std=std)
 
-        self.factor = 1 / math.sqrt(2 * self.state_head_dim)
+        if factor is None:
+            factor = 1 / math.sqrt(2 * self.state_head_dim)
+
+        self.factor = factor
 
         self.reset_parameters()
 
@@ -212,8 +208,8 @@ class GRU(nn.Module):
 
         input = input.view(*input.size()[:-2], -1)
 
-        input = self.output_head_projection(input)
-        input = self.ln_output_head(input.transpose(1, 2)).transpose(1, 2)
+        input = self.output_head_projection(input.transpose(1, 2))
+        input = self.ln_output_head(input).transpose(1, 2)
 
         input = self.output_projection(input)
 
