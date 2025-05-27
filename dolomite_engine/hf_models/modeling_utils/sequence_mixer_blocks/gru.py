@@ -40,8 +40,8 @@ class GroupedLinear(nn.Module):
         self.in_channels = in_channels
         self.out_channels = out_channels
         self.groups = groups
-        self.in_dim = divide_if_divisible(in_channels, groups)
-        self.out_dim = divide_if_divisible(out_channels, groups)
+        self.in_dim = divide_if_divisible(in_channels, groups, "in_channels must be divisible by groups")
+        self.out_dim = divide_if_divisible(out_channels, groups, "out_channels must be divisible by groups")
 
         self.weight = nn.Parameter(torch.empty(self.groups, self.in_channels, self.out_channels))
         self.reset_parameters()
