@@ -33,7 +33,7 @@ tuning_params = {
     "input_head_norm": "rmsnorm",
     "output_head_norm": "gatednorm",
     "factor_mul": 1,
-    "state_weight_init": "identity",
+    "state_weight_init": "orthogonal",
     "gate_in_state_init": "zero",
     "forget_bias_init": "all_heads_gradual_reset",
     "reset_bias_init": 1.0,
@@ -127,34 +127,40 @@ class GRU(nn.Module):
         self.use_padding_free_transformer = use_padding_free_transformer
         self.state_head_dim = divide_if_divisible(self.state_size, self.num_heads, "")
 
-        self.conv_kernel_size = 4
-        self.head_group_size = 4
-        self.num_head_groups = divide_if_divisible(self.num_heads, self.head_group_size, "head groups")
-        self.in_state_size = self.num_head_groups * self.state_head_dim
+        self.head_group_size = 8
+        self.num_groups = divide_if_divisible(self.num_heads, self.head_group_size, "num_heads // num_groups")
+        # self.grouped_state_size = self.num_groups * self.state_head_dim
+        self.grouped_state_size = self.num_groups * int(self.state_head_dim * 3)
+
+
 
         std = initializer_range
         if init_method == "mup":
             std /= math.sqrt(m_width)
-        self.state_weight_std = std
 
         self.input_projection = ParameterizedLinear(
             self.input_size,
-            self.state_size  # gate
-            + self.state_size  # input
-            + self.num_heads  # forget_gate
-            + self.num_heads,  # reset_head
+            self.grouped_state_size + # input
+            self.grouped_state_size + # gate
+            self.num_heads +          # forget_gate
+            self.num_heads,           # reset_head
             bias=add_bias,
             std=std,
         )
-        self.state_weight = nn.Parameter(torch.empty(3 * self.num_heads, self.state_head_dim, self.state_head_dim))
 
-        std = initializer_range / math.sqrt(2 * num_layers)
-        if init_method == "mup":
-            std /= math.sqrt(m_width)
-
-        self.output_head_projection = GroupedLinear(
-            in_channels=self.state_size, out_channels=self.state_size, groups=self.num_heads, std=std
+        self.head_input_ln = get_normalization_function("rmsnorm", self.grouped_state_size)
+        self.head_input_projection = GroupedLinear(
+           in_channels=self.grouped_state_size, out_channels=self.state_size, groups=self.num_groups, std=std
         )
+        self.state_weight_std = std
+        # self.state_weight = nn.Parameter(torch.empty(3 * self.num_heads, self.state_head_dim, self.state_head_dim))
+        self.state_weight = nn.Parameter(torch.empty(self.num_heads, self.state_head_dim, self.state_head_dim))
+
+        self.head_output_projection = GroupedLinear(
+           in_channels=self.state_size, out_channels=self.grouped_state_size, groups=self.num_groups, std=std
+        )
+
+
 
         # if tuning_params['output_head_norm'] == 'rmsnorm':
         #     self.ln_output_head = get_normalization_function("rmsnorm", self.state_size)
@@ -163,8 +169,15 @@ class GRU(nn.Module):
         # elif tuning_params['output_head_norm'] == 'gatednorm':
         #     self.ln_output_head = get_normalization_function("silu_gated_rmsnorm", self.state_size)
 
-        self.ln_output_head = get_normalization_function("silu_gated_rmsnorm", self.state_size)
-        self.output_projection = ParameterizedLinear(self.state_size, self.output_size, bias=False, std=std)
+        self.ln_output_head = get_normalization_function("silu_gated_rmsnorm", self.grouped_state_size)
+
+
+        std = initializer_range / math.sqrt(2 * num_layers)
+        if init_method == "mup":
+            std /= math.sqrt(m_width)
+
+
+        self.output_projection = ParameterizedLinear(self.grouped_state_size, self.output_size, bias=False, std=std)
 
         if factor is None:
             factor = tuning_params["factor_mul"]
@@ -198,7 +211,7 @@ class GRU(nn.Module):
             )
         elif tuning_params["state_weight_init"] == "orthogonal":
             nn.init.zeros_(self.state_weight)
-            W = torch.empty(3 * self.num_heads, self.state_head_dim, self.state_head_dim, device=torch.device("cuda"))
+            W = torch.empty_like(self.state_weight, device=torch.device("cuda"))
             for i in range(self.state_weight.size(0)):
                 nn.init.orthogonal_(W[i])
             self.state_weight.data[:] = W.cpu() / self.factor
@@ -206,9 +219,10 @@ class GRU(nn.Module):
         if tuning_params["gate_in_state_init"] == "zero":
             # set the gates to 0 init.
             # assert self.head_projection.weight.size(0) == self.num_head_groups * 3
-            assert self.state_weight.size(0) == self.num_heads * 3
+            # assert self.state_weight.size(0) == self.num_heads * 3
             # nn.init.zeros_(self.head_projection.weight[self.num_head_groups:])
-            nn.init.zeros_(self.state_weight[self.num_heads :])
+            # nn.init.zeros_(self.state_weight[self.num_heads :])
+            pass
 
         nn.init.zeros_(self.forget_bias)
         nn.init.zeros_(self.reset_bias)
@@ -224,7 +238,6 @@ class GRU(nn.Module):
         #         b = self.forget_bias.data
         #         b = b + (torch.log(forget_init) - torch.log(1 - forget_init))[:, None]
         #         self.forget_bias.data[:] = b
-
         nn.init.constant_(self.reset_bias, tuning_params["reset_bias_init"])
 
     def forward(
@@ -247,22 +260,26 @@ class GRU(nn.Module):
             if attention_mask is not None:
                 cu_seqlens, max_seqlen = compute_cu_seqlens_and_max_seqlen_from_attention_mask(attention_mask)
                 input = pack_sequence(inputs=input, cu_seqlens=cu_seqlens)
+
         input, gate, forget_input, reset_input = self.input_projection(input).split(
-            (self.state_size, self.state_size, self.num_heads, self.num_heads), dim=-1
+            (self.grouped_state_size, self.grouped_state_size, self.num_heads, self.num_heads), dim=-1
         )
+        input = self.head_input_ln(input)
+        input = self.head_input_projection(input)
 
         weight = self.state_weight * self.factor
-        weight, forget_weight, reset_weight = weight.chunk(3, dim=0)
+        # weight, forget_weight, reset_weight = weight.chunk(3, dim=0)
+        forget_weight = torch.zeros_like(weight)
+        reset_weight = forget_weight
 
         input: torch.Tensor = input * self.factor
+        # input = input.view(*(input.size()[:-1]), self.num_groups, self.state_head_dim)
+        # input = input.repeat_interleave(self.head_group_size, dim=-2)
         input = input.view(*(input.size()[:-1]), self.num_heads, self.state_head_dim)
         forget_input: torch.Tensor = forget_input + self.forget_bias
         forget_input = forget_input.unsqueeze(-1).expand_as(input).contiguous()
         reset_input: torch.Tensor = reset_input + self.reset_bias
         reset_input = reset_input.unsqueeze(-1).expand_as(input).contiguous()
-
-        print(input.size(), forget_input.size(), reset_input.size())
-        print(input.stride(), forget_input.stride(), reset_input.stride())
 
         input_state = None if cache_params is None else cache_params.get_cache(self.layer_idx)
 
@@ -287,11 +304,13 @@ class GRU(nn.Module):
         if cache_params is not None:
             input_state = input[:, -1].view(input.size(0), -1)
             cache_params.update(state=input_state, num_tokens_added=input.size(1), layer_idx=self.layer_idx)
-        input = self.output_head_projection(input.flatten(-2, -1))
+        # input = self.output_head_projection(input.flatten(-2, -1))
+        input = input.flatten(-2, -1)
+        input = self.head_output_projection(input)
         input = self.ln_output_head(input, gate)
         input = self.output_projection(input)
 
         return input
 
     def extra_repr(self) -> str:
-        return f"gradient_clipping={self.gradient_clipping}, weight_shape={str(tuple(self.state_weight.shape))}, factor={self.factor}"
+        return f"gradient_clipping={self.gradient_clipping}, weight_shape={str(tuple(self.state_weight.shape))}, factor={self.factor}, head_group_size={self.head_group_size},"
