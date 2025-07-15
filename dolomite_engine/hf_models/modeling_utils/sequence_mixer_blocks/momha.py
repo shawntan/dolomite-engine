@@ -42,7 +42,7 @@ class MoAttention(Attention):
 
         self.causal = causal
         self.hidden_size = hidden_size
-
+        self.num_attention_heads = num_attention_heads
         self.num_heads = num_attention_heads
         self.num_key_value_heads = num_key_value_heads
 

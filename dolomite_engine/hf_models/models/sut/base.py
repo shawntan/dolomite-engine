@@ -21,7 +21,7 @@ from .layer import SUTBlock
 class SUTPreTrainedModel(PreTrainedModelMixin):
     config_class = SUTConfig
     layer_class = SUTBlock
-    _no_split_modules = ["SUTBlock"]
+    _no_split_modules = ["Block"]
 
 
 class SUTModel(SUTPreTrainedModel, BaseModelMixin):

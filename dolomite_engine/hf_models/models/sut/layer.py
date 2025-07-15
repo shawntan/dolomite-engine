@@ -58,6 +58,27 @@ def _compute_switch_loss(acc_stats):
     return loss.type_as(acc_lse_sq)
 
 
+def build_gate(hidden_size, num_experts, std, router_intermediate_size=256, dropout=0.5):
+    out_linear = ParameterizedLinear(
+        in_features=router_intermediate_size,
+        out_features=num_experts,
+        bias=False,
+        std=std * 0.1,
+    )
+    gate = nn.Sequential(
+        ParameterizedLinear(
+            in_features=hidden_size,
+            out_features=router_intermediate_size,
+            bias=False,
+            std=std,
+        ),
+        nn.Tanh(),
+        nn.Dropout(dropout),
+        out_linear,
+    )
+    return gate
+
+
 class SUTMoAttention(MoAttention):
     def __init__(
         self,
@@ -97,23 +118,7 @@ class SUTMoAttention(MoAttention):
             use_padding_free_transformer,
         )
         std = _get_std_for_linear(initializer_range, init_method, m_width)
-        out_linear = ParameterizedLinear(
-            in_features=128,
-            out_features=num_experts,
-            bias=False,
-            std=std,
-        )
-        self.gate = nn.Sequential(
-            ParameterizedLinear(
-                in_features=self.hidden_size,
-                out_features=128,
-                bias=False,
-                std=std,
-            ),
-            nn.Tanh(),
-            nn.Dropout(0.2),
-            out_linear,
-        )
+        self.gate = build_gate(hidden_size=hidden_size, num_experts=num_experts, std=std)
     # def _get_topk(self, x: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
     #     orig_x = x
     #     with torch.no_grad():
@@ -127,7 +132,7 @@ class SUTMoAttention(MoAttention):
 
     def _compute_routing_weights(self, hidden_states: torch.Tensor) -> tuple[torch.Tensor]:
         # hidden_states -> (total_q, hidden_size)
-        router_logits = 0.025 * self.gate(hidden_states)
+        router_logits = self.gate(hidden_states)
         # router_logits -> (total_q, num_experts)
         router_weights, selected_experts = self._get_topk(router_logits)
         router_weights = F.softmax(router_weights.float(), dim=-1)
@@ -190,24 +195,8 @@ class SUTMoE(MoE):
             use_padding_free_transformer,
         )
         std = _get_std_for_linear(initializer_range, init_method, m_width)
-        out_linear = ParameterizedLinear(
-            in_features=128,
-            out_features=num_experts,
-            bias=False,
-            std=std,
-        )
-        self.gate = nn.Sequential(
-            ParameterizedLinear(
-                in_features=self.hidden_size,
-                out_features=128,
-                bias=False,
-                std=std,
-            ),
-            nn.Tanh(),
-            nn.Dropout(0.2),
-            out_linear,
-        )
 
+        self.gate = build_gate(hidden_size=hidden_size, num_experts=num_experts, std=std)
     # def _get_topk(self, x: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
     #     orig_x = x
     #     with torch.no_grad():
@@ -220,7 +209,7 @@ class SUTMoE(MoE):
 
     def _compute_routing_weights(self, hidden_states: torch.Tensor) -> tuple[torch.Tensor]:
         # hidden_states -> (total_q, hidden_size)
-        router_logits = 0.025 * self.gate(hidden_states)
+        router_logits = self.gate(hidden_states)
         # router_logits -> (total_q, num_experts)
 
         router_weights, selected_experts = self._get_topk(router_logits)
