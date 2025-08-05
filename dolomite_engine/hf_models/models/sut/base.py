@@ -29,6 +29,7 @@ class SUTModel(SUTPreTrainedModel, BaseModelMixin):
         self.embed_dim = config.hidden_size
         self.m_emb = config.m_emb
         self.initializer_range = config.initializer_range
+        self.num_iters = self.config.num_iters
 
         self.wte = ParameterizedEmbedding(config.vocab_size, self.embed_dim, std=self.initializer_range)
 
@@ -38,18 +39,28 @@ class SUTModel(SUTPreTrainedModel, BaseModelMixin):
         if len(config.sequence_mixer_blocks) == 1:
             self.sequence_mixer_block_types = [config.sequence_mixer_blocks[0].sequence_mixer_type]
             self.h = nn.ModuleList(
-                [self.layer_class(config, use_padding_free_transformer=self.use_padding_free_transformer, layer_idx=0)]
+                [
+                    SUTBlock(
+                        config,
+                        use_padding_free_transformer=self.use_padding_free_transformer,
+                        layer_idx=0,
+                        num_iters=self.num_iters,
+                    )
+                ]
             )
         elif len(config.sequence_mixer_blocks) == 3:
-            self.h_first = Block(config, use_padding_free_transformer=self.use_padding_free_transformer, layer_idx=0)
-            self.sequence_mixer_block_types = [config.sequence_mixer_blocks[1].sequence_mixer_type]
+            self.sequence_mixer_block_types = [x.sequence_mixer_type for x in config.sequence_mixer_blocks]
             self.h = nn.ModuleList(
-                [self.layer_class(config, use_padding_free_transformer=self.use_padding_free_transformer, layer_idx=1)]
-            )
-            self.h_last = Block(
-                config,
-                use_padding_free_transformer=self.use_padding_free_transformer,
-                layer_idx=len(config.sequence_mixer_blocks) - 1,
+                [
+                    Block(config, use_padding_free_transformer=self.use_padding_free_transformer, layer_idx=0),
+                    SUTBlock(
+                        config,
+                        use_padding_free_transformer=self.use_padding_free_transformer,
+                        layer_idx=1,
+                        num_iters=self.num_iters,
+                    ),
+                    Block(config, use_padding_free_transformer=self.use_padding_free_transformer, layer_idx=2),
+                ]
             )
 
         self.ln_f = get_normalization_function(
@@ -60,7 +71,6 @@ class SUTModel(SUTPreTrainedModel, BaseModelMixin):
 
         self.position_embedding_type = config.position_embedding_type
         self._setup_positional_encoding()
-        self.num_iters = self.config.num_iters
 
         self.num_forward_count = 0
         self.num_steps_tick = 10 * 20
@@ -115,21 +125,20 @@ class SUTModel(SUTPreTrainedModel, BaseModelMixin):
 
         mamba_mask = None
         mamba_mask_computed = False
-        block: SUTBlock = self.h[0]
         sequence_mixer_type = self.sequence_mixer_block_types[0]
         acc_mlp_router_stats = None
         acc_attn_router_stats = None
 
-        if self.h_first is not None:
-            hidden_states = self.h_first(
-                hidden_states,
-                past_key_values=past_key_values,
-                attention_mask=causal_mask,
-                rope_cos_sin=rope_cos_sin,
-                cu_seqlens=cu_seqlens,
-                max_seqlen=max_seqlen,
-            )
+        hidden_states = self.h[0](
+            hidden_states,
+            past_key_values=past_key_values,
+            attention_mask=causal_mask,
+            rope_cos_sin=rope_cos_sin,
+            cu_seqlens=cu_seqlens,
+            max_seqlen=max_seqlen,
+        )
 
+        block: SUTBlock = self.h[1]
         for i in range(self.num_iters):
 
             is_mamba_layer = sequence_mixer_type in ["mamba2", "rnn"]
@@ -164,14 +173,13 @@ class SUTModel(SUTPreTrainedModel, BaseModelMixin):
 
         add_aux_loss(layer._compute_switch_loss(acc_mlp_router_stats))
         add_aux_loss(layer._compute_switch_loss(acc_attn_router_stats))
-        if self.h_last is not None:
-            hidden_states = self.h_last(
-                hidden_states,
-                past_key_values=past_key_values,
-                attention_mask=causal_mask,
-                rope_cos_sin=rope_cos_sin,
-                cu_seqlens=cu_seqlens,
-                max_seqlen=max_seqlen,
-            )
+        hidden_states = self.h[2](
+            hidden_states,
+            past_key_values=past_key_values,
+            attention_mask=causal_mask,
+            rope_cos_sin=rope_cos_sin,
+            cu_seqlens=cu_seqlens,
+            max_seqlen=max_seqlen,
+        )
         hidden_states = self.ln_f(hidden_states)
         return BaseModelOutputWithPast(last_hidden_state=hidden_states, past_key_values=past_key_values)

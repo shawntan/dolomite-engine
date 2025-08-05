@@ -1,3 +1,5 @@
+import math
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -58,25 +60,26 @@ def _compute_switch_loss(acc_stats):
     return loss.type_as(acc_lse_sq)
 
 
-def build_gate(hidden_size, num_experts, std, router_intermediate_size=256, dropout=0.5):
-    out_linear = ParameterizedLinear(
-        in_features=router_intermediate_size,
-        out_features=num_experts,
-        bias=False,
-        std=std * 0.1,
-    )
-    gate = nn.Sequential(
-        ParameterizedLinear(
-            in_features=hidden_size,
-            out_features=router_intermediate_size,
-            bias=False,
-            std=std,
-        ),
-        nn.Tanh(),
-        nn.Dropout(dropout),
-        out_linear,
-    )
-    return gate
+class RoutingGate(nn.Module):
+    def __init__(
+        self,
+        hidden_size: int,
+        num_experts: int,
+        std: float,
+        router_intermediate_size: int = 256,
+        dropout: float = 0.5,
+    ) -> None:
+        super().__init__()
+        self.std = std
+        self.transform = ParameterizedLinear(
+            in_features=hidden_size, out_features=num_experts, bias=False, std=self.std
+        )
+
+    def forward(self, x):
+        return F.linear(input=x, weight=self.std * self.transform.weight)
+
+    def extra_repr(self):
+        return f"std={self.std},\n"
 
 
 class SUTMoAttention(MoAttention):
@@ -118,7 +121,8 @@ class SUTMoAttention(MoAttention):
             use_padding_free_transformer,
         )
         std = _get_std_for_linear(initializer_range, init_method, m_width)
-        self.gate = build_gate(hidden_size=hidden_size, num_experts=num_experts, std=std)
+        self.gate = RoutingGate(hidden_size=hidden_size, num_experts=num_experts, std=math.sqrt(num_layers) * std)
+
     # def _get_topk(self, x: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
     #     orig_x = x
     #     with torch.no_grad():
@@ -129,7 +133,6 @@ class SUTMoAttention(MoAttention):
     #     x = orig_x[idxs[:, None], indices]
     #     return x, indices
 
-
     def _compute_routing_weights(self, hidden_states: torch.Tensor) -> tuple[torch.Tensor]:
         # hidden_states -> (total_q, hidden_size)
         router_logits = self.gate(hidden_states)
@@ -139,7 +142,6 @@ class SUTMoAttention(MoAttention):
         # we cast back to the input dtype
         router_weights = router_weights.type_as(hidden_states)
         return router_logits, router_weights, selected_experts
-
 
     def forward(
         self,
@@ -196,7 +198,8 @@ class SUTMoE(MoE):
         )
         std = _get_std_for_linear(initializer_range, init_method, m_width)
 
-        self.gate = build_gate(hidden_size=hidden_size, num_experts=num_experts, std=std)
+        self.gate = RoutingGate(hidden_size=hidden_size, num_experts=num_experts, std=math.sqrt(num_layers) * std)
+
     # def _get_topk(self, x: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
     #     orig_x = x
     #     with torch.no_grad():
@@ -246,7 +249,9 @@ class SUTMoE(MoE):
 
 
 class SUTBlock(Block):
-    def __init__(self, config: SUTConfig, use_padding_free_transformer: bool, layer_idx: int | None = None) -> None:
+    def __init__(
+        self, config: SUTConfig, use_padding_free_transformer: bool, layer_idx: int | None = None, num_iters: int = 40
+    ) -> None:
         # super().__init__(config, use_padding_free_transformer)
         nn.Module.__init__(self)
         hidden_size = config.hidden_size
@@ -270,7 +275,7 @@ class SUTBlock(Block):
             init_method=config.init_method,
             initializer_range=config.initializer_range,
             m_width=config.m_width,
-            num_layers=config.num_layers,
+            num_layers=num_iters,
             causal=True,
             layer_idx=layer_idx,
         )
@@ -297,7 +302,7 @@ class SUTBlock(Block):
             init_method=config.init_method,
             initializer_range=config.initializer_range,
             m_width=config.m_width,
-            num_layers=config.num_layers,
+            num_layers=num_iters,
         )
 
         self.mlp_block = SUTMoE(
@@ -331,6 +336,10 @@ class SUTBlock(Block):
             cu_seqlens=cu_seqlens,
             max_seqlen=max_seqlen,
         )
+        # if not isinstance(hidden_states, torch.Tensor):
+        #     hidden_states, attn_router_statistics = hidden_state
+        # else:
+        #     attn_router_statistics = None
 
         if self.m_residual is not None:
             hidden_states = hidden_states * self.m_residual

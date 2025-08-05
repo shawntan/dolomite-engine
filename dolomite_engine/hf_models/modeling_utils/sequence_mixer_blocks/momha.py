@@ -120,6 +120,9 @@ class MoAttention(Attention):
         # idxs = 10 * torch.arange(num_experts)[:, None]  + torch.arange(self.num_key_value_heads)[None, :]
         # self.q_proj.weight.data[:, ::self.head_dim, 0] = idxs
 
+    def extra_repr(self) -> str:
+        return f"top_k={self.top_k},"
+
     def _get_topk(self, x: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
         if self.top_k == 1:
             x, indices = x.max(dim=-1, keepdim=True)
