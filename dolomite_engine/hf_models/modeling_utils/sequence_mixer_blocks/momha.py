@@ -1,15 +1,20 @@
+# **************************************************
+# Copyright (c) 2025, Mayank Mishra
+# **************************************************
+
 import math
 
 import torch
-from torch import nn
+import torch.nn as nn
+import torch.nn.functional as F
 from torch.distributed._functional_collectives import all_reduce
-from torch.nn import functional as F
 
 from ....enums import Kernel
 from ....kernels import is_kernel_allowed, wait_for_ACT
 from ....utils import ProcessGroupManager, divide_if_divisible, is_cute_kernels_available
 from ...cache import GenerationCache
 from ...loss import add_aux_loss
+from ...parameter import mark_parameter_as_mup_learning_rate
 from ..linear import ParameterizedLinear
 from ..mlp_blocks.mlp import _get_std_for_linear
 from ..mlp_blocks.moe import ParameterizedExperts, compute_bincount
@@ -42,13 +47,10 @@ class MoAttention(Attention):
 
         self.causal = causal
         self.hidden_size = hidden_size
-        self.num_attention_heads = num_attention_heads
+        self.num_experts = num_experts
         self.num_heads = num_attention_heads
         self.num_key_value_heads = num_key_value_heads
-
         self.add_bias = add_bias
-
-        assert use_padding_free_transformer
         self.use_padding_free_transformer = use_padding_free_transformer
 
         self.head_dim = divide_if_divisible(
@@ -56,17 +58,31 @@ class MoAttention(Attention):
             self.num_heads,
             f"`hidden_size` ({self.hidden_size}) must be divisible by `num_heads` ({self.num_heads})",
         )
+        self.top_k = divide_if_divisible(
+            self.num_heads,
+            self.num_key_value_heads,
+            f"`num_attention_heads // num_key_value_heads` ({self.num_heads} // {self.num_key_value_heads}) "
+            "must be divisible, and will be used as `top_k`",
+        )
 
-        assert self.num_heads % self.num_key_value_heads == 0
-        self.num_experts = num_experts
-        self.top_k = self.num_heads // self.num_key_value_heads
+        # This is always gqa
+        # self.attention_head_type = get_attention_head_type(num_attention_heads, num_key_value_heads)
+
+        assert (
+            self.num_key_value_heads is not None
+        ), "`num_key_value_heads` needs to be specified with GroupedQueryAttention"
+
+        divide_if_divisible(
+            self.num_heads,
+            self.num_key_value_heads,
+            f"`num_heads` ({self.num_heads}) should be a multiple of `num_key_value_heads` ({self.num_key_value_heads})",
+        )
 
         self.position_embedding_type = position_embedding_type
         self.attention_multiplier = attention_multiplier
         self.layer_idx = layer_idx
 
         std = _get_std_for_linear(initializer_range, init_method, m_width)
-
         self.gate = ParameterizedLinear(
             in_features=self.hidden_size,
             out_features=num_experts,
@@ -74,23 +90,18 @@ class MoAttention(Attention):
             std=std,
         )
 
-        self.attention_head_type = "mha"
-
-        # note that the actual layout is different for the output and depends on whether we are using MHA, MQA or GQA
-        # (self.hidden_size + 2 * self.num_key_value_heads * self.head_dim) is just the actual number output features
         std = initializer_range
         if init_method == "mup":
             std /= math.sqrt(m_width)
 
-        self.q_proj = ParameterizedExperts(
+        self._c_attn_q = ParameterizedExperts(
             num_experts=num_experts,
             in_features=self.hidden_size,
             out_features=self.num_key_value_heads * self.head_dim,
             add_bias=add_bias,
             std=std,
         )
-
-        self.kv_proj = ParameterizedLinear(
+        self.c_attn_kv = ParameterizedLinear(
             self.hidden_size,
             2 * self.num_key_value_heads * self.head_dim,
             bias=self.add_bias,
@@ -100,8 +111,7 @@ class MoAttention(Attention):
         std = initializer_range / math.sqrt(2 * num_layers)
         if init_method == "mup":
             std /= math.sqrt(m_width)
-
-        self.o_proj = ParameterizedExperts(
+        self._c_proj = ParameterizedExperts(
             num_experts=num_experts,
             in_features=self.num_key_value_heads * self.head_dim,
             out_features=self.hidden_size,
@@ -110,18 +120,19 @@ class MoAttention(Attention):
         )
 
         self.softmax_dropout_p = softmax_dropout
+
         self.softmax_dropout = nn.Identity() if softmax_dropout == 0 else nn.Dropout(softmax_dropout)
         self.dropout = nn.Identity() if dropout == 0 else nn.Dropout(dropout)
+        self._norm = nn.GroupNorm(self.num_key_value_heads, self.num_key_value_heads * self.head_dim)
+
         self.is_hopper_or_newer_gpu = torch.cuda.is_available() and torch.cuda.get_device_capability(
             torch.cuda.current_device()
         ) >= (9, 0)
 
-        # torch.nn.init.zeros_(self.q_proj.weight)
-        # idxs = 10 * torch.arange(num_experts)[:, None]  + torch.arange(self.num_key_value_heads)[None, :]
-        # self.q_proj.weight.data[:, ::self.head_dim, 0] = idxs
-
-    def extra_repr(self) -> str:
-        return f"top_k={self.top_k},"
+        mark_parameter_as_mup_learning_rate(self.gate.weight)
+        mark_parameter_as_mup_learning_rate(self._c_attn_q.weight)
+        mark_parameter_as_mup_learning_rate(self.c_attn_kv.weight)
+        mark_parameter_as_mup_learning_rate(self._c_proj.weight)
 
     def _get_topk(self, x: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
         if self.top_k == 1:
@@ -141,65 +152,10 @@ class MoAttention(Attention):
         router_weights = router_weights.type_as(hidden_states)
         return router_logits, router_weights, selected_experts
 
-    def _prepare_qkv_for_forward(self, hidden_states, sorted_expert_idxs, sorted_scattered_idxs, expert_offsets):
-        kv_states = self.kv_proj(hidden_states)
-        if self.use_padding_free_transformer:
-            total_q = hidden_states.shape[0]
-            input_shape = (hidden_states.shape[0], self.num_key_value_heads, -1)
-            output_shape = (total_q, -1, self.head_dim)
-        else:
-            batch_size, query_length = hidden_states.shape[:-1]
-            input_shape = (*hidden_states.shape[:-1], self.num_key_value_heads, -1)
-            output_shape = (batch_size, query_length, -1, self.head_dim)
-
-        kv_states = kv_states.view(*input_shape)
-        # query, key, value = hidden_states.split(
-        #     ((self.num_heads // self.num_key_value_heads) * self.head_dim, self.head_dim, self.head_dim), dim=-1
-        # )
-        key, value = kv_states.chunk(2, dim=-1)
-        # head_idx = torch.arange(self.num_key_value_heads, device=value.device)
-        # value = value * 0  + head_idx[None, :, None] # TODO
-
-        # key = torch.repeat_interleave(key, dim=1, repeats=self.num_heads // self.num_key_value_heads)
-        # value = torch.repeat_interleave(value, dim=1, repeats=self.num_heads // self.num_key_value_heads)
-
-        query = self.q_proj(
-            hidden_states,
-            self.top_k,
-            sorted_expert_idxs,
-            sorted_scattered_idxs,
-            expert_offsets,
-            grouped_out=False,
-        )
-        # group heads for gqa-style attention computation
-        query = query.view(total_q, self.top_k, self.num_key_value_heads, self.head_dim).transpose(2, 1)
-        query = query.reshape(*output_shape)
-
-        if not self.use_padding_free_transformer:
-            query = query.transpose(1, 2)
-            key = key.transpose(1, 2)
-            value = value.transpose(1, 2)
-
-        return query, key, value
-
-    def compute_attn(
-        self,
-        hidden_states: torch.Tensor,
-        past_key_values: GenerationCache | None = None,
-        attention_mask: torch.Tensor | None = None,
-        rope_cos_sin: torch.Tensor | None = None,
-        cu_seqlens: torch.Tensor | None = None,
-        max_seqlen: int | None = None,
-    ) -> torch.Tensor:
-        use_flash_attention_2 = is_kernel_allowed(Kernel.flash_attention_2)
-        use_flash_attention_3 = is_kernel_allowed(Kernel.flash_attention_3)
-
-        if self.use_padding_free_transformer:
-            assert use_flash_attention_2 or use_flash_attention_3
-            assert past_key_values is None
-
-        router_logits, router_weights, selected_experts = self._compute_routing_weights(hidden_states)
-
+    def c_attn_q(self, hidden_states):
+        hidden_states_size = hidden_states.size()
+        flat_hidden_states = hidden_states.view(-1, hidden_states_size[-1])
+        router_logits, router_weights, selected_experts = self._compute_routing_weights(flat_hidden_states)
         with torch.no_grad():
             sorted_expert_idxs, sorted_scattered_idxs = selected_experts.flatten().sort()
             expert_offsets = compute_bincount(
@@ -208,63 +164,47 @@ class MoAttention(Attention):
                 use_continuous_count=self.is_hopper_or_newer_gpu and is_kernel_allowed(Kernel.continuous_count_cute),
             ).cumsum(-1)
 
-        query, key, value = self._prepare_qkv_for_forward(
-            hidden_states, sorted_expert_idxs, sorted_scattered_idxs, expert_offsets
+        query = self._c_attn_q(
+            flat_hidden_states,
+            self.top_k,
+            sorted_expert_idxs=sorted_expert_idxs,
+            sorted_scattered_idxs=sorted_scattered_idxs,
+            expert_offsets=expert_offsets,
+            grouped_in=False,
+            grouped_out=False,
         )
-
-        if self.position_embedding_type == "rope":
-            query = apply_rotary_pos_emb(query, rope_cos_sin)
-            key = apply_rotary_pos_emb(key, rope_cos_sin)
-
-        if past_key_values is not None:
-            key, value = past_key_values.update(key_states=key, value_states=value, layer_idx=self.layer_idx)
-
-        if self.use_padding_free_transformer:
-            (-1, self.hidden_size)
-        else:
-            # TODO avoid this extra transpose
-            query = query.transpose(1, 2)
-            if self.attention_head_type == "mqa":
-                key = key.squeeze(1).unsqueeze(2)
-                value = value.squeeze(1).unsqueeze(2)
-            else:
-                key = key.transpose(1, 2)
-                value = value.transpose(1, 2)
-
-            batch_size, query_length = query.shape[:2]
-            (batch_size, query_length, -1)
-
-        # query = wait_for_ACT(query, wait_in_forward=True, wait_in_backward=False)
-        # key = wait_for_ACT(key, wait_in_forward=True, wait_in_backward=False)
-        # value = wait_for_ACT(value, wait_in_forward=True, wait_in_backward=False)
-        hidden_states = flash_attention(
-            query=query,
-            key=key,
-            value=value,
-            cu_seqlens=cu_seqlens,
-            max_seqlen=max_seqlen,
-            attention_mask=attention_mask,
-            use_padding_free_transformer=self.use_padding_free_transformer,
-            causal=self.causal,
-            dropout=self.softmax_dropout_p if self.training else 0,
-            softmax_scale=self._get_softmax_scale(),
-        )
-        # hidden_states = wait_for_ACT(hidden_states, wait_in_forward=False, wait_in_backward=True)
-        hidden_states = hidden_states.view(-1, self.num_key_value_heads, self.top_k, self.head_dim).transpose(2, 1)
-        hidden_states = hidden_states.reshape(
-            hidden_states.size(0) * self.top_k, self.num_key_value_heads * self.head_dim
-        )
-        hidden_states = self.o_proj(
-            hidden_states,
-            1,
+        query = query.view(*hidden_states_size[:-1], self.top_k, self.num_key_value_heads, self.head_dim)
+        return (
+            query,
             sorted_expert_idxs,
             sorted_scattered_idxs,
             expert_offsets,
+            router_weights,
+            router_logits,
+            selected_experts,
+        )
+
+    def c_proj(self, hidden_states, sorted_expert_idxs, sorted_scattered_idxs, expert_offsets, router_weights):
+        hidden_states_size = hidden_states.size()
+        flatten_hidden_states = hidden_states.view(-1, self.num_key_value_heads * self.head_dim)
+        hidden_states = self._c_proj(
+            flatten_hidden_states,
+            1,
+            sorted_expert_idxs=sorted_expert_idxs,
+            sorted_scattered_idxs=sorted_scattered_idxs,
+            expert_offsets=expert_offsets,
             grouped_in=False,
+            grouped_out=False,
             gates=router_weights,
         )
-        hidden_states = self.dropout(hidden_states)
-        return hidden_states, router_logits, selected_experts
+        hidden_states = hidden_states.view(*hidden_states_size[:-1], self.hidden_size)
+        return hidden_states
+
+    def norm(self, hidden_states):
+        hidden_states_size = hidden_states.size()
+        flat_hidden_states = hidden_states.view(-1, self.num_key_value_heads * self.head_dim)
+        flat_hidden_states = self._norm(flat_hidden_states)
+        return flat_hidden_states.view(hidden_states_size)
 
     def forward(
         self,
@@ -275,13 +215,8 @@ class MoAttention(Attention):
         cu_seqlens: torch.Tensor | None = None,
         max_seqlen: int | None = None,
     ) -> torch.Tensor:
-        output, router_logits, selected_experts = self.compute_attn(
-            hidden_states,
-            past_key_values,
-            attention_mask,
-            rope_cos_sin,
-            cu_seqlens,
-            max_seqlen,
+        hidden_states, router_logits, selected_experts = self.compute_attn(
+            hidden_states, past_key_values, attention_mask, rope_cos_sin, cu_seqlens, max_seqlen
         )
         aux_loss = (
             self._compute_switch_loss(
@@ -291,7 +226,131 @@ class MoAttention(Attention):
             else 0
         )
         add_aux_loss(aux_loss)
-        return output
+        return hidden_states
+
+    def compute_attn(
+        self,
+        hidden_states,
+        past_key_values,
+        attention_mask,
+        rope_cos_sin,
+        cu_seqlens,
+        max_seqlen,
+        kv_hidden_states=None,
+    ):
+
+        if kv_hidden_states is None:
+            kv_hidden_states = hidden_states
+
+        use_flash_attention_2 = is_kernel_allowed(Kernel.flash_attention_2)
+        use_flash_attention_3 = is_kernel_allowed(Kernel.flash_attention_3)
+
+        if self.use_padding_free_transformer:
+            assert use_flash_attention_2 or use_flash_attention_3
+            assert past_key_values is None
+
+        if self.use_padding_free_transformer:
+            total_q = hidden_states.shape[0]
+            input_shape = (total_q, self.num_key_value_heads, -1)
+            output_shape = (total_q, -1, self.head_dim)
+        else:
+            batch_size, query_length = hidden_states.shape[:-1]
+
+            input_shape = (batch_size, query_length, self.num_key_value_heads, -1)
+            output_shape = (batch_size, query_length, -1, self.head_dim)
+
+        (
+            query,
+            sorted_expert_idxs,
+            sorted_scattered_idxs,
+            expert_offsets,
+            router_weights,
+            router_logits,
+            selected_experts,
+        ) = self.c_attn_q(hidden_states)
+        query = query.view(*output_shape)
+        key_value = self.c_attn_kv(kv_hidden_states)
+        key_value = key_value.view(*input_shape)
+        key, value = key_value.chunk(2, dim=-1)
+
+        if not self.use_padding_free_transformer:
+            query = query.transpose(1, 2)
+            key = key.transpose(1, 2)
+            value = value.transpose(1, 2)
+
+        if self.position_embedding_type == "rope":
+            query = apply_rotary_pos_emb(query, rope_cos_sin)
+            key = apply_rotary_pos_emb(key, rope_cos_sin)
+
+        if past_key_values is not None:
+            key, value = past_key_values.update(key_states=key, value_states=value, layer_idx=self.layer_idx)
+
+        if use_flash_attention_2 or use_flash_attention_3:
+            if self.use_padding_free_transformer:
+                output_shape = (-1, self.hidden_size)
+            else:
+                query = query.transpose(1, 2)
+                key = key.transpose(1, 2)
+                value = value.transpose(1, 2)
+
+                output_shape = (batch_size, query_length, -1)
+
+            query = wait_for_ACT(query, wait_in_forward=True, wait_in_backward=False)
+            key = wait_for_ACT(key, wait_in_forward=True, wait_in_backward=False)
+            value = wait_for_ACT(value, wait_in_forward=True, wait_in_backward=False)
+
+            if self.use_padding_free_transformer:
+                key = key.repeat(1, self.top_k, 1)
+                value = value.repeat(1, self.top_k, 1)
+            else:
+                key = key.repeat(1, 1, self.top_k, 1)
+                value = value.repeat(1, 1, self.top_k, 1)
+
+            hidden_states = flash_attention(
+                query=query,
+                key=key,
+                value=value,
+                cu_seqlens=cu_seqlens,
+                max_seqlen=max_seqlen,
+                attention_mask=attention_mask,
+                use_padding_free_transformer=self.use_padding_free_transformer,
+                causal=self.causal,
+                dropout=self.softmax_dropout_p if self.training else 0,
+                softmax_scale=self.attention_multiplier,
+            )
+
+            del query, key, value
+
+            hidden_states = wait_for_ACT(hidden_states, wait_in_forward=False, wait_in_backward=True)
+
+            hidden_states = hidden_states.view(*output_shape)
+        else:
+            key = key.repeat(1, 1, self.top_k, 1)
+            value = value.repeat(1, 1, self.top_k, 1)
+
+            hidden_states = F.scaled_dot_product_attention(
+                query,
+                key,
+                value,
+                attn_mask=attention_mask,
+                dropout_p=self.softmax_dropout_p if self.training else 0,
+                is_causal=self.causal if attention_mask is None else False,
+                scale=self.attention_multiplier,
+                enable_gqa=True,
+            )
+
+            del query, key, value
+
+            batch_size = hidden_states.shape[0]
+            hidden_states = hidden_states.transpose(1, 2)
+            hidden_states = hidden_states.reshape(batch_size, -1, self.num_heads * self.head_dim)
+
+        hidden_states = self.norm(hidden_states)
+        hidden_states = self.c_proj(
+            hidden_states, sorted_expert_idxs, sorted_scattered_idxs, expert_offsets, router_weights
+        )
+        hidden_states = self.dropout(hidden_states)
+        return hidden_states, router_logits, selected_experts
 
     def _compute_switch_loss(self, logits: torch.Tensor, probs: torch.Tensor, topk_idxs: torch.Tensor) -> torch.Tensor:
         logits = logits.view(-1, logits.size(-1))

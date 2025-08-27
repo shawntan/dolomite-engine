@@ -12,9 +12,11 @@ from ...mixins import BaseModelMixin, PreTrainedModelMixin
 from ...mixins.dense import Block
 from ...mixins.modeling_outputs import BaseModelOutputWithPast
 from ...modeling_utils import ParameterizedEmbedding, get_normalization_function
+from ...modeling_utils.mlp_blocks.mlp import _get_std_for_linear
 from ...utils import convert_padding_free_lists_to_tensors, is_generation_cache_enabled
 from . import layer
 from .config import SUTConfig
+from .halting import HaltingGate
 from .layer import SUTBlock
 
 
@@ -36,6 +38,12 @@ class SUTModel(SUTPreTrainedModel, BaseModelMixin):
         self.embedding_dropout = (
             nn.Identity() if config.embedding_dropout == 0 else nn.Dropout(config.embedding_dropout)
         )
+
+        _get_std_for_linear(config.initializer_range, config.init_method, config.m_width)
+
+        # self.halt = HaltingGate(self.embed_dim, std=std)
+        self.halt = None
+
         if len(config.sequence_mixer_blocks) == 1:
             self.sequence_mixer_block_types = [config.sequence_mixer_blocks[0].sequence_mixer_type]
             self.h = nn.ModuleList(
@@ -50,16 +58,23 @@ class SUTModel(SUTPreTrainedModel, BaseModelMixin):
             )
         elif len(config.sequence_mixer_blocks) == 3:
             self.sequence_mixer_block_types = [x.sequence_mixer_type for x in config.sequence_mixer_blocks]
+            self.enc_dec_layers = config.enc_dec_layers
             self.h = nn.ModuleList(
                 [
-                    Block(config, use_padding_free_transformer=self.use_padding_free_transformer, layer_idx=0),
+                    Block(config, use_padding_free_transformer=self.use_padding_free_transformer, layer_idx=0)
+                    for i in range(self.enc_dec_layers)
+                ]
+                + [
                     SUTBlock(
                         config,
                         use_padding_free_transformer=self.use_padding_free_transformer,
                         layer_idx=1,
                         num_iters=self.num_iters,
-                    ),
-                    Block(config, use_padding_free_transformer=self.use_padding_free_transformer, layer_idx=2),
+                    )
+                ]
+                + [
+                    Block(config, use_padding_free_transformer=self.use_padding_free_transformer, layer_idx=2)
+                    for i in range(self.enc_dec_layers)
                 ]
             )
 
@@ -138,16 +153,33 @@ class SUTModel(SUTPreTrainedModel, BaseModelMixin):
             max_seqlen=max_seqlen,
         )
 
-        block: SUTBlock = self.h[1]
-        for i in range(self.num_iters):
-
+        for i in range(self.enc_dec_layers):
+            block = self.h[i]
             is_mamba_layer = sequence_mixer_type in ["mamba2", "rnn"]
-
             if is_mamba_layer and not mamba_mask_computed:
                 mamba_mask = self._get_mamba_mask(attention_mask, past_key_values)
                 mamba_mask_computed = True
 
-            # prev_hidden_states = hidden_states
+            prev_hidden_states = hidden_states
+            hidden_states = block(
+                hidden_states,
+                past_key_values=past_key_values,
+                attention_mask=mamba_mask if is_mamba_layer else causal_mask,
+                rope_cos_sin=rope_cos_sin,
+                cu_seqlens=cu_seqlens,
+                max_seqlen=max_seqlen,
+            )
+
+        halt_state = None
+        kv_hidden_states = None
+        block = self.h[self.enc_dec_layers]
+        for i in range(self.num_iters):
+            is_mamba_layer = sequence_mixer_type in ["mamba2", "rnn"]
+            if is_mamba_layer and not mamba_mask_computed:
+                mamba_mask = self._get_mamba_mask(attention_mask, past_key_values)
+                mamba_mask_computed = True
+
+            prev_hidden_states = hidden_states
             hidden_states, mlp_router_stats, attn_router_stats = block(
                 hidden_states,
                 past_key_values=past_key_values,
@@ -156,14 +188,17 @@ class SUTModel(SUTPreTrainedModel, BaseModelMixin):
                 cu_seqlens=cu_seqlens,
                 max_seqlen=max_seqlen,
                 layer_idx=i,
+                kv_hidden_states=kv_hidden_states,
             )
-
+            if self.halt is not None:
+                kv_hidden_states, halt_state = self.halt.forward(prev_hidden_states, hidden_states, halt_state)
             acc_mlp_router_stats = layer._update_statistics(acc_mlp_router_stats, mlp_router_stats)
             acc_attn_router_stats = layer._update_statistics(acc_attn_router_stats, attn_router_stats)
 
             # if (self.curr_iters < self.num_iters) and (i >= self.curr_iters):
             #     hidden_states = 0.999 * prev_hidden_states + 0.001 * hidden_states
-
+        if self.halt is not None:
+            hidden_states = kv_hidden_states
         # if self.curr_iters < self.num_iters:
         #     if self.num_forward_count < self.num_steps_tick * self.num_iters:
         #         self.num_forward_count += 1
@@ -173,13 +208,21 @@ class SUTModel(SUTPreTrainedModel, BaseModelMixin):
 
         add_aux_loss(layer._compute_switch_loss(acc_mlp_router_stats))
         add_aux_loss(layer._compute_switch_loss(acc_attn_router_stats))
-        hidden_states = self.h[2](
-            hidden_states,
-            past_key_values=past_key_values,
-            attention_mask=causal_mask,
-            rope_cos_sin=rope_cos_sin,
-            cu_seqlens=cu_seqlens,
-            max_seqlen=max_seqlen,
-        )
+        for i in range(self.enc_dec_layers):
+            block = self.h[i + self.enc_dec_layers + 1]
+            is_mamba_layer = sequence_mixer_type in ["mamba2", "rnn"]
+            if is_mamba_layer and not mamba_mask_computed:
+                mamba_mask = self._get_mamba_mask(attention_mask, past_key_values)
+                mamba_mask_computed = True
+
+            prev_hidden_states = hidden_states
+            hidden_states = block(
+                hidden_states,
+                past_key_values=past_key_values,
+                attention_mask=mamba_mask if is_mamba_layer else causal_mask,
+                rope_cos_sin=rope_cos_sin,
+                cu_seqlens=cu_seqlens,
+                max_seqlen=max_seqlen,
+            )
         hidden_states = self.ln_f(hidden_states)
         return BaseModelOutputWithPast(last_hidden_state=hidden_states, past_key_values=past_key_values)

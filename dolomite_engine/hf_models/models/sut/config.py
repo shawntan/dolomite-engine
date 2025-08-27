@@ -33,6 +33,8 @@ class SUTConfig(CommonConfig):
         router_aux_loss_coef: float = 0.001,
         tie_word_embeddings: bool = True,
         rope_dim: int | None = None,
+        pre_layernorm: bool = True,
+        enc_dec_layers: int = 1,
         **kwargs,
     ) -> None:
         super().__init__(
@@ -64,3 +66,5 @@ class SUTConfig(CommonConfig):
         )
         self.num_layers = 1
         self.num_iters = num_layers
+        self.pre_layernorm = pre_layernorm
+        self.enc_dec_layers = enc_dec_layers

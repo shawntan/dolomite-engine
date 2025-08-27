@@ -17,6 +17,7 @@ from ...modeling_utils.linear import ParameterizedLinear
 from ...modeling_utils.mlp_blocks.mlp import _get_std_for_linear
 from ...modeling_utils.mlp_blocks.moe import MoE, compute_bincount
 from ...modeling_utils.sequence_mixer_blocks.momha import MoAttention
+from ...parameter import mark_parameter_as_mup_learning_rate, mark_parameter_as_no_weight_decay
 from .config import SUTConfig
 
 
@@ -53,8 +54,11 @@ def _compute_switch_loss(acc_stats):
     num_experts = acc_freq.size(0)
     if ProcessGroupManager.is_initialized() and ProcessGroupManager.get_data_parallel_world_size() > 1:
         acc_freq = all_reduce(acc_freq, reduceOp="sum", group=ProcessGroupManager.get_data_parallel_group())
-        acc_probs = all_reduce(acc_probs, reduceOp="sum", group=ProcessGroupManager.get_data_parallel_group())
-    switch_loss = num_experts * (F.normalize(acc_probs, p=1, dim=0) * F.normalize(acc_freq.float(), p=1, dim=0)).sum()
+        # acc_probs = all_reduce(acc_probs, reduceOp="sum", group=ProcessGroupManager.get_data_parallel_group())
+    # switch_loss = num_experts * (F.normalize(acc_probs, p=1, dim=0) * F.normalize(acc_freq.float(), p=1, dim=0)).sum()
+    switch_loss = num_experts * torch.dot(
+        F.normalize(acc_probs, p=1, dim=0), F.normalize(acc_freq.to(acc_probs.dtype), p=1, dim=0)
+    )
     z_loss = acc_lse_sq / acc_freq.sum()
     loss = switch_loss + 0.1 * z_loss
     return loss.type_as(acc_lse_sq)
@@ -71,12 +75,14 @@ class RoutingGate(nn.Module):
     ) -> None:
         super().__init__()
         self.std = std
+        self.dropout = dropout
         self.transform = ParameterizedLinear(
             in_features=hidden_size, out_features=num_experts, bias=False, std=self.std
         )
+        mark_parameter_as_mup_learning_rate(self.transform.weight)
 
     def forward(self, x):
-        return F.linear(input=x, weight=self.std * self.transform.weight)
+        return F.linear(input=x, weight=self.transform.weight)
 
     def extra_repr(self):
         return f"std={self.std},\n"
@@ -121,7 +127,7 @@ class SUTMoAttention(MoAttention):
             use_padding_free_transformer,
         )
         std = _get_std_for_linear(initializer_range, init_method, m_width)
-        self.gate = RoutingGate(hidden_size=hidden_size, num_experts=num_experts, std=math.sqrt(num_layers) * std)
+        self.gate = RoutingGate(hidden_size=hidden_size, num_experts=num_experts, std=std / math.sqrt(num_layers))
 
     # def _get_topk(self, x: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
     #     orig_x = x
@@ -151,6 +157,7 @@ class SUTMoAttention(MoAttention):
         rope_cos_sin: torch.Tensor | None = None,
         cu_seqlens: torch.Tensor | None = None,
         max_seqlen: int | None = None,
+        kv_hidden_states: torch.Tensor | None = None,
     ) -> torch.Tensor:
         output, router_logits, selected_experts = self.compute_attn(
             hidden_states,
@@ -159,6 +166,7 @@ class SUTMoAttention(MoAttention):
             rope_cos_sin,
             cu_seqlens,
             max_seqlen,
+            kv_hidden_states=kv_hidden_states,
         )
         return output, _compute_router_statistics(router_logits, selected_experts, self.is_hopper_or_newer_gpu)
 
@@ -198,7 +206,7 @@ class SUTMoE(MoE):
         )
         std = _get_std_for_linear(initializer_range, init_method, m_width)
 
-        self.gate = RoutingGate(hidden_size=hidden_size, num_experts=num_experts, std=math.sqrt(num_layers) * std)
+        self.gate = RoutingGate(hidden_size=hidden_size, num_experts=num_experts, std=std / math.sqrt(num_layers))
 
     # def _get_topk(self, x: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
     #     orig_x = x
@@ -238,10 +246,10 @@ class SUTMoE(MoE):
         else:
             hidden_states = moe_output + self._compute_shared_experts(hidden_states)
 
-        # del moe_output
+        del moe_output
 
         if not self.use_padding_free_transformer:
-            hidden_states = hidden_states.reshape(batch_size, sequence_length, self.hidden_size)
+            hidden_states = hidden_states.view(batch_size, sequence_length, self.hidden_size)
 
         hidden_states = self.dropout(hidden_states)
 
@@ -254,6 +262,7 @@ class SUTBlock(Block):
     ) -> None:
         # super().__init__(config, use_padding_free_transformer)
         nn.Module.__init__(self)
+        self.pre_layernorm = config.pre_layernorm
         hidden_size = config.hidden_size
         self.m_residual = config.m_residual
         self.sequence_mixer_type = config.sequence_mixer_blocks[layer_idx].sequence_mixer_type
@@ -264,7 +273,8 @@ class SUTBlock(Block):
 
         # sequence_mixer_type = config.sequence_mixer_blocks[layer_idx].sequence_mixer_type
         seq_block = config.sequence_mixer_blocks[layer_idx]
-        sequence_mixer_kwargs = dict(
+
+        self.sequence_mixer = SUTMoAttention(
             hidden_size=config.hidden_size,
             num_attention_heads=seq_block.num_attention_heads,
             num_key_value_heads=seq_block.num_key_value_heads,
@@ -278,10 +288,6 @@ class SUTBlock(Block):
             num_layers=num_iters,
             causal=True,
             layer_idx=layer_idx,
-        )
-
-        self.sequence_mixer = SUTMoAttention(
-            **sequence_mixer_kwargs,
             num_experts=seq_block.num_experts,
             softmax_dropout=seq_block.softmax_dropout,
             use_padding_free_transformer=use_padding_free_transformer,
@@ -293,7 +299,7 @@ class SUTBlock(Block):
 
         seq_block = config.mlp_blocks[layer_idx]
 
-        kwargs = dict(
+        self.mlp_block = SUTMoE(
             hidden_size=config.hidden_size,
             intermediate_size=seq_block.intermediate_size,
             activation_function=seq_block.activation_function,
@@ -303,10 +309,6 @@ class SUTBlock(Block):
             initializer_range=config.initializer_range,
             m_width=config.m_width,
             num_layers=num_iters,
-        )
-
-        self.mlp_block = SUTMoE(
-            **kwargs,
             shared_intermediate_size=seq_block.shared_intermediate_size,
             num_experts=seq_block.num_experts,
             num_experts_per_tok=seq_block.num_experts_per_tok,
@@ -322,32 +324,35 @@ class SUTBlock(Block):
         cu_seqlens: torch.Tensor | None = None,
         max_seqlen: int | None = None,
         layer_idx: int | None = None,
+        kv_hidden_states: torch.Tensor | None = None,
     ) -> torch.Tensor:
         self.sequence_mixer.layer_idx = layer_idx
         self.mlp_block.layer_idx = layer_idx
         residual = hidden_states
-        hidden_states = self.ln_1(hidden_states)
 
-        hidden_states, attn_router_statistics = self._sequence_mixer_forward(
-            hidden_states=hidden_states,
+        if self.pre_layernorm:
+            hidden_states = self.ln_1(hidden_states)
+
+        hidden_states, attn_router_statistics = self.sequence_mixer(
+            hidden_states,
             past_key_values=past_key_values,
             attention_mask=attention_mask,
             rope_cos_sin=rope_cos_sin,
             cu_seqlens=cu_seqlens,
             max_seqlen=max_seqlen,
+            kv_hidden_states=kv_hidden_states,
         )
-        # if not isinstance(hidden_states, torch.Tensor):
-        #     hidden_states, attn_router_statistics = hidden_state
-        # else:
-        #     attn_router_statistics = None
 
         if self.m_residual is not None:
             hidden_states = hidden_states * self.m_residual
 
         hidden_states = hidden_states + residual
+        if not self.pre_layernorm:
+            hidden_states = self.ln_1(hidden_states)
 
         residual = hidden_states
-        hidden_states = self.ln_2(hidden_states)
+        if self.pre_layernorm:
+            hidden_states = self.ln_2(hidden_states)
 
         hidden_states, mlp_router_statistics = self.mlp_block(hidden_states)
 
@@ -356,32 +361,7 @@ class SUTBlock(Block):
 
         hidden_states = hidden_states + residual
 
+        if not self.pre_layernorm:
+            hidden_states = self.ln_2(hidden_states)
+
         return hidden_states, mlp_router_statistics, attn_router_statistics
-
-    # def forward(
-    #     self,
-    #     hidden_states: torch.Tensor,
-    #     past_key_values: GenerationCache | None = None,
-    #     attention_mask: torch.Tensor | None = None,
-    #     rope_cos_sin: torch.Tensor | None = None,
-    #     cu_seqlens: torch.Tensor | None = None,
-    #     max_seqlen: int | None = None, layer_idx: int | None = None,
-    # ) -> torch.Tensor:
-    #     self.sequence_mixer.layer_idx = layer_idx
-    #     self.mlp_block.layer_idx = layer_idx
-
-    #     x = self.ln_1(hidden_states)
-    #     out = self._sequence_mixer_forward(
-    #         hidden_states=x,
-    #         past_key_values=past_key_values,
-    #         attention_mask=attention_mask,
-    #         rope_cos_sin=rope_cos_sin,
-    #         cu_seqlens=cu_seqlens,
-    #         max_seqlen=max_seqlen,
-    #     )
-    #     hidden_states = self.ln_2(out + x)
-    #     x = hidden_states
-    #     out, mlp_router_statistics = self.mlp_block(x)
-    #     hidden_states = out + x
-
-    #     return hidden_states, mlp_router_statistics
