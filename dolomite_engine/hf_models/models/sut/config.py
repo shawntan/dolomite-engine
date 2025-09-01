@@ -28,20 +28,23 @@ class SUTConfig(CommonConfig):
         m_width: float | None = None,
         m_residual: float | None = None,
         init_method: str = "normal",
-        sequence_mixer_blocks: list[dict] = None,
         mlp_blocks: list[dict] = None,
+        sequence_mixer_blocks: list[dict] = None,
         router_aux_loss_coef: float = 0.001,
         tie_word_embeddings: bool = True,
         rope_dim: int | None = None,
+        # SUT specific
         pre_layernorm: bool = True,
-        enc_dec_layers: int = 1,
+        enc_uni_dec_layers: list[int] = [0, 0, 0],
+        halting: bool = False,
         **kwargs,
     ) -> None:
+        total_layers = sum(enc_uni_dec_layers)
         super().__init__(
             vocab_size,
             max_position_embeddings,
             hidden_size,
-            3,
+            total_layers,
             embedding_dropout,
             normalization_function,
             layer_norm_epsilon,
@@ -64,7 +67,13 @@ class SUTConfig(CommonConfig):
             rope_dim,
             **kwargs,
         )
+
+        if mlp_blocks is not None and sequence_mixer_blocks is not None:
+            assert len(mlp_blocks) == total_layers, (len(mlp_blocks), enc_uni_dec_layers)
+            assert len(sequence_mixer_blocks) == total_layers
+
         self.num_layers = 1
         self.num_iters = num_layers
         self.pre_layernorm = pre_layernorm
-        self.enc_dec_layers = enc_dec_layers
+        self.enc_uni_dec_layers = enc_uni_dec_layers
+        self.halting = halting

@@ -149,6 +149,11 @@ class ExperimentsTracker:
                 if _JOB_ID is not None:
                     values["job"] = _JOB_ID
                 wandb.log(values)
+
+                from ..hf_models.models.sut.layer import log_moe_stats
+
+                log_moe_stats(wandb, context)
+
             else:
                 raise ValueError(f"unexpected experiments_tracker ({self.experiments_tracker_name})")
 

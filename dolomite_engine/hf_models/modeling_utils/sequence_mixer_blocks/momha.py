@@ -184,7 +184,7 @@ class MoAttention(Attention):
             selected_experts,
         )
 
-    def c_proj(self, hidden_states, sorted_expert_idxs, sorted_scattered_idxs, expert_offsets, router_weights):
+    def c_proj_o(self, hidden_states, sorted_expert_idxs, sorted_scattered_idxs, expert_offsets, router_weights):
         hidden_states_size = hidden_states.size()
         flatten_hidden_states = hidden_states.view(-1, self.num_key_value_heads * self.head_dim)
         hidden_states = self._c_proj(
@@ -346,7 +346,7 @@ class MoAttention(Attention):
             hidden_states = hidden_states.reshape(batch_size, -1, self.num_heads * self.head_dim)
 
         hidden_states = self.norm(hidden_states)
-        hidden_states = self.c_proj(
+        hidden_states = self.c_proj_o(
             hidden_states, sorted_expert_idxs, sorted_scattered_idxs, expert_offsets, router_weights
         )
         hidden_states = self.dropout(hidden_states)

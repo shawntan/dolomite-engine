@@ -14,9 +14,10 @@ from ...loss import add_aux_loss
 from ...mixins.dense.layer import Block
 from ...modeling_utils import get_mlp_block, get_normalization_function, get_sequence_mixer
 from ...modeling_utils.linear import ParameterizedLinear
-from ...modeling_utils.mlp_blocks.mlp import _get_std_for_linear
+from ...modeling_utils.mlp_blocks.mlp import MLP, _get_std_for_linear
 from ...modeling_utils.mlp_blocks.moe import MoE, compute_bincount
 from ...modeling_utils.sequence_mixer_blocks.momha import MoAttention
+from ...modeling_utils.sequence_mixer_blocks.softmax_attention import Attention
 from ...parameter import mark_parameter_as_mup_learning_rate, mark_parameter_as_no_weight_decay
 from .config import SUTConfig
 
@@ -49,13 +50,46 @@ def _update_statistics(acc_stats, stats):
         return acc_freq, acc_probs, acc_lse_sq
 
 
-def _compute_switch_loss(acc_stats):
+from ....utils.tracking import is_tracking_rank, wandb
+
+
+moe_stats = {}
+
+
+def update_moe_stats(moe_id, freq):
+    if is_tracking_rank():
+        global moe_stats
+        freq = freq.clone()
+        if moe_id not in moe_stats:
+            moe_stats[moe_id] = freq
+        else:
+            moe_stats[moe_id] += freq
+
+
+def log_moe_stats(logger, context):
+    import numpy as np
+
+    if is_tracking_rank():
+        global moe_stats
+        # values = {f"{context}/{k}": v for k, v in values.items()}
+        values = {}
+        for moe_id in moe_stats:
+            acc_freq_ = moe_stats[moe_id].float()
+            acc_freq = F.normalize(acc_freq_, p=1, dim=0).cpu().numpy()
+            idxs = np.arange(acc_freq.shape[0] + 1)
+            values[f"{context}/expert-{moe_id}"] = wandb.Histogram(np_histogram=(acc_freq, idxs))
+            values[f"{context}/expert-{moe_id}-min"] = acc_freq.min()
+            moe_stats[moe_id] = acc_freq_ * 0
+        logger.log(values)
+
+
+def _compute_switch_loss(acc_stats, moe_id=None):
     acc_freq, acc_probs, acc_lse_sq = acc_stats
     num_experts = acc_freq.size(0)
     if ProcessGroupManager.is_initialized() and ProcessGroupManager.get_data_parallel_world_size() > 1:
         acc_freq = all_reduce(acc_freq, reduceOp="sum", group=ProcessGroupManager.get_data_parallel_group())
-        # acc_probs = all_reduce(acc_probs, reduceOp="sum", group=ProcessGroupManager.get_data_parallel_group())
-    # switch_loss = num_experts * (F.normalize(acc_probs, p=1, dim=0) * F.normalize(acc_freq.float(), p=1, dim=0)).sum()
+    if moe_id is not None:
+        update_moe_stats(moe_id, acc_freq)
     switch_loss = num_experts * torch.dot(
         F.normalize(acc_probs, p=1, dim=0), F.normalize(acc_freq.to(acc_probs.dtype), p=1, dim=0)
     )
@@ -108,26 +142,70 @@ class SUTMoAttention(MoAttention):
         layer_idx: int,
         use_padding_free_transformer: bool,
     ) -> None:
-        super().__init__(
-            num_experts,
-            hidden_size,
-            num_attention_heads,
-            num_key_value_heads,
-            attention_multiplier,
-            position_embedding_type,
-            add_bias,
-            softmax_dropout,
-            dropout,
-            init_method,
-            initializer_range,
-            m_width,
-            num_layers,
-            causal,
-            layer_idx,
-            use_padding_free_transformer,
-        )
-        std = _get_std_for_linear(initializer_range, init_method, m_width)
-        self.gate = RoutingGate(hidden_size=hidden_size, num_experts=num_experts, std=std / math.sqrt(num_layers))
+        if num_experts > 1:
+            super().__init__(
+                num_experts,
+                hidden_size,
+                num_attention_heads,
+                num_key_value_heads,
+                attention_multiplier,
+                position_embedding_type,
+                add_bias,
+                softmax_dropout,
+                dropout,
+                init_method,
+                initializer_range,
+                m_width,
+                num_layers,
+                causal,
+                layer_idx,
+                use_padding_free_transformer,
+            )
+            std = _get_std_for_linear(initializer_range, init_method, m_width)
+            self.gate = RoutingGate(hidden_size=hidden_size, num_experts=num_experts, std=std / math.sqrt(num_layers))
+        else:
+            Attention.__init__(
+                self,
+                hidden_size,
+                num_attention_heads,
+                num_key_value_heads,
+                attention_multiplier,
+                position_embedding_type,
+                add_bias,
+                softmax_dropout,
+                dropout,
+                init_method,
+                initializer_range,
+                m_width,
+                num_layers,
+                causal,
+                layer_idx,
+                use_padding_free_transformer,
+            )
+
+            def _forward(
+                hidden_states: torch.Tensor,
+                past_key_values: GenerationCache | None = None,
+                attention_mask: torch.Tensor | None = None,
+                rope_cos_sin: torch.Tensor | None = None,
+                cu_seqlens: torch.Tensor | None = None,
+                max_seqlen: int | None = None,
+                kv_hidden_states: torch.Tensor | None = None,
+            ):
+                return (
+                    Attention.forward(
+                        self,
+                        hidden_states,
+                        past_key_values,
+                        attention_mask,
+                        rope_cos_sin,
+                        cu_seqlens,
+                        max_seqlen,
+                    ),
+                    None,
+                )
+
+            self.forward = _forward
 
     # def _get_topk(self, x: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
     #     orig_x = x
@@ -171,7 +249,7 @@ class SUTMoAttention(MoAttention):
         return output, _compute_router_statistics(router_logits, selected_experts, self.is_hopper_or_newer_gpu)
 
 
-class SUTMoE(MoE):
+class SUTMoE(MLP, MoE):
 
     def __init__(
         self,
@@ -189,24 +267,44 @@ class SUTMoE(MoE):
         num_layers: int,
         use_padding_free_transformer: bool,
     ) -> None:
-        super().__init__(
-            hidden_size,
-            intermediate_size,
-            shared_intermediate_size,
-            num_experts,
-            num_experts_per_tok,
-            activation_function,
-            add_bias,
-            dropout,
-            init_method,
-            initializer_range,
-            m_width,
-            num_layers,
-            use_padding_free_transformer,
-        )
-        std = _get_std_for_linear(initializer_range, init_method, m_width)
 
-        self.gate = RoutingGate(hidden_size=hidden_size, num_experts=num_experts, std=std / math.sqrt(num_layers))
+        if num_experts > 1:
+            MoE.__init__(
+                self,
+                hidden_size,
+                intermediate_size,
+                shared_intermediate_size,
+                num_experts,
+                num_experts_per_tok,
+                activation_function,
+                add_bias,
+                dropout,
+                init_method,
+                initializer_range,
+                m_width,
+                num_layers,
+                use_padding_free_transformer,
+            )
+            std = _get_std_for_linear(initializer_range, init_method, m_width)
+            self.gate = RoutingGate(hidden_size=hidden_size, num_experts=num_experts, std=std / math.sqrt(num_layers))
+        else:
+            MLP.__init__(
+                self,
+                hidden_size=hidden_size,
+                intermediate_size=intermediate_size,
+                activation_function=activation_function,
+                add_bias=add_bias,
+                dropout=dropout,
+                init_method=init_method,
+                initializer_range=initializer_range,
+                m_width=m_width,
+                num_layers=num_layers,
+            )
+
+            def _forward(hidden_states: torch.Tensor) -> torch.Tensor:
+                return MLP.forward(self, hidden_states), None
+
+            self.forward = _forward
 
     # def _get_topk(self, x: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
     #     orig_x = x
@@ -273,8 +371,7 @@ class SUTBlock(Block):
 
         # sequence_mixer_type = config.sequence_mixer_blocks[layer_idx].sequence_mixer_type
         seq_block = config.sequence_mixer_blocks[layer_idx]
-
-        self.sequence_mixer = SUTMoAttention(
+        sequence_mixer_kwargs = dict(
             hidden_size=config.hidden_size,
             num_attention_heads=seq_block.num_attention_heads,
             num_key_value_heads=seq_block.num_key_value_heads,
@@ -288,17 +385,19 @@ class SUTBlock(Block):
             num_layers=num_iters,
             causal=True,
             layer_idx=layer_idx,
-            num_experts=seq_block.num_experts,
             softmax_dropout=seq_block.softmax_dropout,
             use_padding_free_transformer=use_padding_free_transformer,
         )
 
+        self.sequence_mixer = SUTMoAttention(
+            **sequence_mixer_kwargs,
+            num_experts=seq_block.num_experts if seq_block.sequence_mixer_type == "mo_attention" else 1,
+        )
         self.ln_2 = get_normalization_function(
             config.normalization_function, hidden_size, eps=config.layer_norm_epsilon
         )
 
         seq_block = config.mlp_blocks[layer_idx]
-
         self.mlp_block = SUTMoE(
             hidden_size=config.hidden_size,
             intermediate_size=seq_block.intermediate_size,
@@ -309,9 +408,9 @@ class SUTBlock(Block):
             initializer_range=config.initializer_range,
             m_width=config.m_width,
             num_layers=num_iters,
-            shared_intermediate_size=seq_block.shared_intermediate_size,
-            num_experts=seq_block.num_experts,
-            num_experts_per_tok=seq_block.num_experts_per_tok,
+            shared_intermediate_size=seq_block.shared_intermediate_size if seq_block.mlp_type == "MoE" else 1,
+            num_experts=seq_block.num_experts if seq_block.mlp_type == "MoE" else 1,
+            num_experts_per_tok=seq_block.num_experts_per_tok if seq_block.mlp_type == "MoE" else 1,
             use_padding_free_transformer=use_padding_free_transformer,
         )
 
@@ -342,7 +441,6 @@ class SUTBlock(Block):
             max_seqlen=max_seqlen,
             kv_hidden_states=kv_hidden_states,
         )
-
         if self.m_residual is not None:
             hidden_states = hidden_states * self.m_residual
 
