@@ -348,6 +348,8 @@ def load_checkpoint_for_inference(
     for key in list(state.keys()):
         state[key] = state[key].to(dtype)
 
+    print(state.keys())
+    print(model)
     model.load_state_dict(state)
 
     return model, args_from_checkpoint, state

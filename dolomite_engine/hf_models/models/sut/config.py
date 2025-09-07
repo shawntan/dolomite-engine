@@ -12,7 +12,7 @@ class SUTConfig(CommonConfig):
         vocab_size: int = 50304,
         max_position_embeddings: int = 1024,
         hidden_size: int = 768,
-        num_layers: int = 12,
+        num_iters: int = 12,
         embedding_dropout: float = 0,
         normalization_function: str = "layernorm",
         layer_norm_epsilon: float = 1e-5,
@@ -37,34 +37,37 @@ class SUTConfig(CommonConfig):
         pre_layernorm: bool = True,
         enc_uni_dec_layers: list[int] = [0, 0, 0],
         halting: bool = False,
+        shared_kv_cache: bool = False,
         **kwargs,
     ) -> None:
         total_layers = sum(enc_uni_dec_layers)
+        if "num_layers" in kwargs:
+            del kwargs["num_layers"]
         super().__init__(
-            vocab_size,
-            max_position_embeddings,
-            hidden_size,
-            total_layers,
-            embedding_dropout,
-            normalization_function,
-            layer_norm_epsilon,
-            initializer_range,
-            use_cache,
-            bos_token_id,
-            eos_token_id,
-            pad_token_id,
-            position_embedding_type,
-            rope_theta,
-            rope_scaling,
-            m_emb,
-            m_width,
-            m_residual,
-            init_method,
-            sequence_mixer_blocks,
-            mlp_blocks,
-            router_aux_loss_coef,
-            tie_word_embeddings,
-            rope_dim,
+            vocab_size=vocab_size,
+            max_position_embeddings=max_position_embeddings,
+            hidden_size=hidden_size,
+            num_layers=total_layers,
+            embedding_dropout=embedding_dropout,
+            normalization_function=normalization_function,
+            layer_norm_epsilon=layer_norm_epsilon,
+            initializer_range=initializer_range,
+            use_cache=use_cache,
+            bos_token_id=bos_token_id,
+            eos_token_id=eos_token_id,
+            pad_token_id=pad_token_id,
+            position_embedding_type=position_embedding_type,
+            rope_theta=rope_theta,
+            rope_scaling=rope_scaling,
+            m_emb=m_emb,
+            m_width=m_width,
+            m_residual=m_residual,
+            init_method=init_method,
+            sequence_mixer_blocks=sequence_mixer_blocks,
+            mlp_blocks=mlp_blocks,
+            router_aux_loss_coef=router_aux_loss_coef,
+            tie_word_embeddings=tie_word_embeddings,
+            rope_dim=rope_dim,
             **kwargs,
         )
 
@@ -72,8 +75,8 @@ class SUTConfig(CommonConfig):
             assert len(mlp_blocks) == total_layers, (len(mlp_blocks), enc_uni_dec_layers)
             assert len(sequence_mixer_blocks) == total_layers
 
-        self.num_layers = 1
-        self.num_iters = num_layers
+        self.num_iters = num_iters
         self.pre_layernorm = pre_layernorm
         self.enc_uni_dec_layers = enc_uni_dec_layers
         self.halting = halting
+        self.shared_kv_cache = shared_kv_cache

@@ -118,26 +118,29 @@ def get_mup_group_with_names(model: ModelWrapper, optimizer_class_args: dict) ->
             no_weight_decay_params[name] = parameter
         else:
             normal_params[name] = parameter
-    params_group_list = _ParamsGroupsList(
-        params_groups=[
-            _ParamsGroup(name="normal", parameter_name_map=normal_params),
-            _ParamsGroup(
-                name="no_weight_decay",
-                parameter_name_map=no_weight_decay_params,
-                params_group_kwargs={"weight_decay": 0},
-            ),
-            _ParamsGroup(
-                name="mup",
-                parameter_name_map=mup_params,
-                params_group_kwargs={"lr": optimizer_class_args["lr"] / model.config.m_width},
-            ),
+    params_groups = [
+        _ParamsGroup(name="normal", parameter_name_map=normal_params),
+        _ParamsGroup(
+            name="no_weight_decay",
+            parameter_name_map=no_weight_decay_params,
+            params_group_kwargs={"weight_decay": 0},
+        ),
+        _ParamsGroup(
+            name="mup",
+            parameter_name_map=mup_params,
+            params_group_kwargs={"lr": optimizer_class_args["lr"] / model.config.m_width},
+        ),
+    ]
+    if mup_repeated_factor is not None:
+        params_groups.append(
             _ParamsGroup(
                 name="mup_repeated",
                 parameter_name_map=mup_repeated_params,
                 params_group_kwargs={"lr": optimizer_class_args["lr"] / (model.config.m_width * mup_repeated_factor)},
-            ),
-        ]
-    )
+            )
+        )
+
+    params_group_list = _ParamsGroupsList(params_groups=params_groups)
 
     return params_group_list
 

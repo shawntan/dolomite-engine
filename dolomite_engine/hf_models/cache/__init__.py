@@ -23,7 +23,6 @@ _CACHE_CLASSES = {
 class GenerationCache(Cache):
     def __init__(self, config: CommonConfig, **kwargs) -> None:
         super().__init__()
-
         self._seen_tokens = 0
         self.cache: list[_SoftmaxAttentionCache] = [
             _CACHE_CLASSES[config.sequence_mixer_blocks[i].sequence_mixer_type](config, i, **kwargs)

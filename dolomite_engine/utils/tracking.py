@@ -150,7 +150,7 @@ class ExperimentsTracker:
                     values["job"] = _JOB_ID
                 wandb.log(values)
 
-                from ..hf_models.models.sut.layer import log_moe_stats
+                from ..hf_models.models.sut.mixture_aux_loss import log_moe_stats
 
                 log_moe_stats(wandb, context)
 
