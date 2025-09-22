@@ -82,8 +82,8 @@ class SUTModel(SUTPreTrainedModel, BaseModelMixin):
             )
             idx += 1
         self.h = nn.ModuleList(mod_list)
-        for m in self.h:
-            setattr(m, "visited", False)
+        # for m in self.h:
+        #     setattr(m, "visited", False)
 
         self.ln_f = get_normalization_function(
             config.normalization_function, self.embed_dim, eps=config.layer_norm_epsilon
@@ -162,19 +162,19 @@ class SUTModel(SUTPreTrainedModel, BaseModelMixin):
         # enc_hidden_states = hidden_states
 
         # TODO update if multiple UT blocks
-        # halt_state = None
-        # kv_hidden_states = None
-        for _ in range(self.num_iters):
+        halt_state = None
+        kv_hidden_states = None
+        for i in range(self.num_iters):
             key, value = None, None
+            prev_hidden_states = hidden_states
             for u_block_idx in range(self.uni_layers):
                 block = self.h[block_idx + u_block_idx]
                 is_mamba_layer = sequence_mixer_type in ["mamba2", "rnn"]
                 if not block.shared_kv_cache:
                     key, value = None, None
 
-                prev_hidden_states = hidden_states
                 hidden_states, key, value = block(
-                    prev_hidden_states,
+                    hidden_states,
                     past_key_values=past_key_values,
                     attention_mask=mamba_mask if is_mamba_layer else causal_mask,
                     rope_cos_sin=rope_cos_sin,
@@ -183,14 +183,14 @@ class SUTModel(SUTPreTrainedModel, BaseModelMixin):
                     layer_idx=block_idx + u_block_idx,
                     key=key,
                     value=value,
+                    kv_hidden_states=kv_hidden_states if u_block_idx == 0 else None,
                 )
-                block.visited = True
+                # block.visited = True
+            if self.halt is not None:
+                kv_hidden_states, halt_state = self.halt(prev_hidden_states, hidden_states, halt_state)
 
-            # if self.halt is not None:
-            #     kv_hidden_states, halt_state = self.halt.forward(prev_hidden_states, hidden_states, halt_state)
-
-        # if self.halt is not None:
-        #     hidden_states = kv_hidden_states
+        if self.halt is not None:
+            hidden_states = kv_hidden_states
 
         if self.training:
 
@@ -214,7 +214,7 @@ class SUTModel(SUTPreTrainedModel, BaseModelMixin):
             )
             block_idx += 1
 
-        assert all(m.visited for m in self.h)
+        # assert all(m.visited for m in self.h)
         hidden_states = self.ln_f(hidden_states)
         return BaseModelOutputWithPast(last_hidden_state=hidden_states, past_key_values=past_key_values)
 
@@ -240,6 +240,6 @@ class SUTModel(SUTPreTrainedModel, BaseModelMixin):
             cu_seqlens=cu_seqlens,
             max_seqlen=max_seqlen,
         )
-        block.visited = True
+        # block.visited = True
 
         return hidden_states

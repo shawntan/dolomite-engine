@@ -257,6 +257,7 @@ class MoAttention(Attention):
         max_seqlen,
         key=None,
         value=None,
+        kv_hidden_states=None,
     ):
 
         use_flash_attention_2 = is_kernel_allowed(Kernel.flash_attention_2)
@@ -276,14 +277,15 @@ class MoAttention(Attention):
             router_weights,
             router_logits,
             selected_experts,
-        ) = self._prepare_qkv(hidden_states, key=key, value=value)
-        if self.position_embedding_type == "rope":
-            query = apply_rotary_pos_emb(query, rope_cos_sin)
-            key = apply_rotary_pos_emb(_key, rope_cos_sin)
-        if past_key_values is not None:
-            key, value = past_key_values.update(key_states=key, value_states=value, layer_idx=self.layer_idx)
-        else:
+        ) = self._prepare_qkv(hidden_states, key=key, value=value, kv_hidden_states=kv_hidden_states)
+        if key is None:
+            key = _key
             value = _value
+            if self.position_embedding_type == "rope":
+                query = apply_rotary_pos_emb(query, rope_cos_sin)
+                key = apply_rotary_pos_emb(key, rope_cos_sin)
+            if past_key_values is not None:
+                key, value = past_key_values.update(key_states=key, value_states=value, layer_idx=self.layer_idx)
 
         hidden_states = self.attn_fun(
             query,
@@ -315,7 +317,10 @@ class MoAttention(Attention):
         hidden_states = self.dropout(hidden_states)
         return hidden_states
 
-    def _prepare_qkv(self, hidden_states, key=None, value=None):
+    def _prepare_qkv(self, hidden_states, key=None, value=None, kv_hidden_states=None):
+        if kv_hidden_states is None:
+            kv_hidden_states = hidden_states
+
         if self.use_padding_free_transformer:
             total_q = hidden_states.shape[0]
             input_shape = (total_q, self.num_key_value_heads, -1)
@@ -336,7 +341,7 @@ class MoAttention(Attention):
                 selected_experts,
             ) = self.c_attn_q(hidden_states)
             query = query.view(*output_shape)
-            key_value = self.c_attn_kv(hidden_states)
+            key_value = self.c_attn_kv(kv_hidden_states)
             key_value = key_value.view(*input_shape)
             key, value = key_value.chunk(2, dim=-1)
 

@@ -133,9 +133,9 @@ class SUTMoAttention(MoAttention):
         router_weights = router_weights.type_as(hidden_states)
         return router_logits, router_weights, selected_experts
 
-    def _prepare_qkv(self, hidden_states, key=None, value=None):
+    def _prepare_qkv(self, hidden_states, key=None, value=None, kv_hidden_states=None):
         if not self.shared_kv_cache:
-            return super()._prepare_qkv(hidden_states, key=key, value=value)
+            return super()._prepare_qkv(hidden_states, key=key, value=value, kv_hidden_states=kv_hidden_states)
         else:
             if self.use_padding_free_transformer:
                 total_q = hidden_states.shape[0]
@@ -161,9 +161,18 @@ class SUTMoAttention(MoAttention):
         max_seqlen: int | None = None,
         key: torch.Tensor | None = None,
         value: torch.Tensor | None = None,
+        kv_hidden_states: torch.Tensor | None = None,
     ) -> torch.Tensor:
         output, router_logits, selected_experts, key, value = self.compute_attn(
-            hidden_states, past_key_values, attention_mask, rope_cos_sin, cu_seqlens, max_seqlen, key, value
+            hidden_states,
+            past_key_values,
+            attention_mask,
+            rope_cos_sin,
+            cu_seqlens,
+            max_seqlen,
+            key,
+            value,
+            kv_hidden_states=kv_hidden_states,
         )
         if self.num_experts > 1:
             mixture_aux_loss.update_stats(
@@ -332,6 +341,7 @@ class SUTBlock(Block):
         layer_idx: int | None = None,
         key: torch.Tensor | None = None,
         value: torch.Tensor | None = None,
+        kv_hidden_states: torch.Tensor | None = None,
     ) -> torch.Tensor:
         self.sequence_mixer.layer_idx = layer_idx
         self.mlp_block.layer_idx = layer_idx
@@ -349,6 +359,7 @@ class SUTBlock(Block):
             max_seqlen=max_seqlen,
             key=key,
             value=value,
+            kv_hidden_states=kv_hidden_states,
         )
         if self.m_residual is not None:
             hidden_states = hidden_states * self.m_residual
