@@ -79,12 +79,6 @@ def _get_moe_id(obj):
         return obj.moe_id
 
 
-def reset():
-    global _current_id, _stats_tracker
-    _current_id = 0
-    _stats_tracker = []
-
-
 def update_stats(module, stats):
     global _stats_tracker
     moe_id = _get_moe_id(module)
@@ -97,6 +91,12 @@ def compute_total_loss():
         total_aux_loss += _compute_switch_loss(_stats_tracker[moe_id], moe_id)
         _stats_tracker[moe_id] = None
     return total_aux_loss
+
+
+def reset():
+    global _current_id, _stats_tracker
+    _current_id = 0
+    _stats_tracker = []
 
 
 reset()

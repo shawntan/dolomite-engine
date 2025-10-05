@@ -37,6 +37,7 @@ class SUTConfig(CommonConfig):
         pre_layernorm: bool = True,
         enc_uni_dec_layers: list[int] = [0, 0, 0],
         halting: bool = False,
+        halt_loss_coeff: float = 1.0,
         shared_kv_cache: bool = False,
         **kwargs,
     ) -> None:
@@ -79,4 +80,5 @@ class SUTConfig(CommonConfig):
         self.pre_layernorm = pre_layernorm
         self.enc_uni_dec_layers = enc_uni_dec_layers
         self.halting = halting
+        self.halt_loss_coeff = halt_loss_coeff
         self.shared_kv_cache = shared_kv_cache

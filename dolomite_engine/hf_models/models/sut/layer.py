@@ -37,6 +37,23 @@ def _compute_router_statistics(logits: torch.Tensor, topk_idxs: torch.Tensor, is
     return sum_freq.to(torch.long), sum_probs, sum_lse_sq
 
 
+# FIXME refactor to use this.
+def _compute_halted_router_statistics(
+    logits: torch.Tensor, topk_idxs: torch.Tensor, non_halt_weight: torch.Tensor
+) -> torch.Tensor:
+    num_experts = logits.size(-1)
+    k = topk_idxs.size(-1)
+    logits = logits.view(-1, num_experts)
+    non_halt_weight = non_halt_weight.flatten().float()
+    probs = torch.softmax(logits, dim=-1)
+    probs = probs.view(-1, probs.size(-1)).float()
+    sum_freq = torch.zeros((num_experts,), dtype=torch.float32, device=logits.device)
+    sum_freq.scatter_add_(dim=0, index=topk_idxs.flatten(), src=non_halt_weight.repeat_interleave(k))
+    sum_probs = (non_halt_weight.unsqueeze(0).float() @ probs).squeeze(0)
+    sum_lse_sq = ((torch.logsumexp(logits, dim=-1) ** 2).unsqueeze(0).float() @ probs).squeeze(0)
+    return sum_freq.to(torch.long), sum_probs, sum_lse_sq
+
+
 class RoutingGate(nn.Module):
     def __init__(
         self,

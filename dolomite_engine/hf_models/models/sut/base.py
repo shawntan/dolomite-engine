@@ -43,12 +43,6 @@ class SUTModel(SUTPreTrainedModel, BaseModelMixin):
             nn.Identity() if config.embedding_dropout == 0 else nn.Dropout(config.embedding_dropout)
         )
 
-        if config.halting:
-            std = _get_std_for_linear(config.initializer_range, config.init_method, config.m_width)
-            self.halt = HaltingGate(self.embed_dim, std=std)
-        else:
-            self.halt = None
-
         self.sequence_mixer_block_types = [x.sequence_mixer_type for x in config.sequence_mixer_blocks]
         self.enc_layers, self.uni_layers, self.dec_layers = config.enc_uni_dec_layers
 
@@ -63,6 +57,7 @@ class SUTModel(SUTPreTrainedModel, BaseModelMixin):
         # block_config = copy.deepcopy(config)
         # block_config.m_width = config.m_width * math.sqrt(config.num_iters)
         for uni_idx in range(self.uni_layers):
+
             sut_block = SUTBlock(
                 config,
                 use_padding_free_transformer=self.use_padding_free_transformer,
@@ -75,6 +70,19 @@ class SUTModel(SUTPreTrainedModel, BaseModelMixin):
                 if hasattr(p, "_has_mup_learning_rate") and p._has_mup_learning_rate:
                     p._has_mup_learning_rate = math.sqrt(config.num_iters)
             idx += 1
+
+        if config.halting:
+            std = _get_std_for_linear(config.initializer_range, config.init_method, config.m_width)
+            self.halt = HaltingGate(
+                self.embed_dim,
+                std=std,
+                aux_coeff=config.halt_loss_coeff,
+                ln=get_normalization_function(
+                    config.normalization_function, self.embed_dim, eps=config.layer_norm_epsilon
+                ),
+            )
+        else:
+            self.halt = None
 
         for _ in range(self.dec_layers):
             mod_list.append(
@@ -161,13 +169,15 @@ class SUTModel(SUTPreTrainedModel, BaseModelMixin):
             block_idx += 1
         # enc_hidden_states = hidden_states
 
-        # TODO update if multiple UT blocks
         halt_state = None
         kv_hidden_states = None
-        for i in range(self.num_iters):
+        for i in range(self.num_iters):  # looped region
+
             key, value = None, None
-            prev_hidden_states = hidden_states
-            for u_block_idx in range(self.uni_layers):
+
+            prev_hidden_states = hidden_states  # this is for halting later
+
+            for u_block_idx in range(self.uni_layers):  # inner layers
                 block = self.h[block_idx + u_block_idx]
                 is_mamba_layer = sequence_mixer_type in ["mamba2", "rnn"]
                 if not block.shared_kv_cache:
@@ -185,20 +195,19 @@ class SUTModel(SUTPreTrainedModel, BaseModelMixin):
                     value=value,
                     kv_hidden_states=kv_hidden_states if u_block_idx == 0 else None,
                 )
-                # block.visited = True
+
             if self.halt is not None:
                 kv_hidden_states, halt_state = self.halt(prev_hidden_states, hidden_states, halt_state)
 
         if self.halt is not None:
             hidden_states = kv_hidden_states
+            # hidden_states = self.halt.finalise(hidden_states, halt_state)
 
         if self.training:
-
             add_aux_loss(mixture_aux_loss.compute_total_loss())
 
         block_idx = block_idx + self.uni_layers
 
-        # hidden_states = enc_hidden_states + hidden_states * 0.
         for _ in range(self.dec_layers):
             hidden_states = self.execute_block(
                 self.h[block_idx],
