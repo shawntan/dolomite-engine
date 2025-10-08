@@ -22,9 +22,9 @@ from .config import SUTConfig
 
 
 def _compute_router_statistics(logits: torch.Tensor, topk_idxs: torch.Tensor, is_hopper_or_newer_gpu) -> torch.Tensor:
+    # print("no halting statistics")
+    logits = logits.view(-1, logits.size(-1)).float()
     probs = torch.softmax(logits, dim=-1)
-    logits = logits.view(-1, logits.size(-1))
-    probs = probs.view(-1, probs.size(-1))
     num_experts = logits.size(1)
 
     sum_freq = compute_bincount(
@@ -34,23 +34,27 @@ def _compute_router_statistics(logits: torch.Tensor, topk_idxs: torch.Tensor, is
     )
     sum_probs = probs.sum(0)
     sum_lse_sq = (torch.logsumexp(logits, dim=-1) ** 2).sum()
+    # print(sum_freq.size(), sum_probs.size(), sum_lse_sq.size())
     return sum_freq.to(torch.long), sum_probs, sum_lse_sq
 
 
 # FIXME refactor to use this.
 def _compute_halted_router_statistics(
-    logits: torch.Tensor, topk_idxs: torch.Tensor, non_halt_weight: torch.Tensor
+    logits: torch.Tensor, topk_idxs: torch.Tensor, unhalted_weight: torch.Tensor
 ) -> torch.Tensor:
+    # print("halting statistics")
     num_experts = logits.size(-1)
     k = topk_idxs.size(-1)
     logits = logits.view(-1, num_experts)
-    non_halt_weight = non_halt_weight.flatten().float()
+    unhalted_weight = unhalted_weight.flatten().float()
     probs = torch.softmax(logits, dim=-1)
     probs = probs.view(-1, probs.size(-1)).float()
     sum_freq = torch.zeros((num_experts,), dtype=torch.float32, device=logits.device)
-    sum_freq.scatter_add_(dim=0, index=topk_idxs.flatten(), src=non_halt_weight.repeat_interleave(k))
-    sum_probs = (non_halt_weight.unsqueeze(0).float() @ probs).squeeze(0)
-    sum_lse_sq = ((torch.logsumexp(logits, dim=-1) ** 2).unsqueeze(0).float() @ probs).squeeze(0)
+    sum_freq.scatter_add_(dim=0, index=topk_idxs.flatten(), src=unhalted_weight.repeat_interleave(k))
+    sum_probs = (unhalted_weight.unsqueeze(0).float() @ probs).squeeze(0)
+    # print((torch.logsumexp(logits, dim=-1) ** 2).size(), unhalted_weight.size())
+    sum_lse_sq = ((torch.logsumexp(logits, dim=-1) ** 2).unsqueeze(0).float() @ unhalted_weight).squeeze(0)
+    # print(sum_freq.size(), sum_probs.size(), sum_lse_sq.size())
     return sum_freq.to(torch.long), sum_probs, sum_lse_sq
 
 
@@ -179,6 +183,7 @@ class SUTMoAttention(MoAttention):
         key: torch.Tensor | None = None,
         value: torch.Tensor | None = None,
         kv_hidden_states: torch.Tensor | None = None,
+        unhalted_weight: torch.Tensor | None = None,
     ) -> torch.Tensor:
         output, router_logits, selected_experts, key, value = self.compute_attn(
             hidden_states,
@@ -193,7 +198,14 @@ class SUTMoAttention(MoAttention):
         )
         if self.num_experts > 1:
             mixture_aux_loss.update_stats(
-                self, _compute_router_statistics(router_logits, selected_experts, self.is_hopper_or_newer_gpu)
+                self,
+                (
+                    _compute_router_statistics(router_logits, selected_experts, self.is_hopper_or_newer_gpu)
+                    if unhalted_weight is None
+                    else _compute_halted_router_statistics(
+                        router_logits, selected_experts, unhalted_weight=unhalted_weight
+                    )
+                ),
             )
         return output, key, value
 
@@ -246,7 +258,7 @@ class SUTMoE(MoE):
 
         return router_logits, router_weights, selected_experts
 
-    def forward(self, hidden_states: torch.Tensor) -> torch.Tensor:
+    def forward(self, hidden_states: torch.Tensor, unhalted_weight: torch.Tensor | None = None) -> torch.Tensor:
         if not self.use_padding_free_transformer:
             batch_size, sequence_length, _ = hidden_states.shape
 
@@ -269,7 +281,14 @@ class SUTMoE(MoE):
         hidden_states = self.dropout(hidden_states)
 
         mixture_aux_loss.update_stats(
-            self, _compute_router_statistics(router_logits, selected_experts, self.is_hopper_or_newer_gpu)
+            self,
+            (
+                _compute_router_statistics(router_logits, selected_experts, self.is_hopper_or_newer_gpu)
+                if unhalted_weight is None
+                else _compute_halted_router_statistics(
+                    router_logits, selected_experts, unhalted_weight=unhalted_weight
+                )
+            ),
         )
         return hidden_states
 
@@ -359,6 +378,7 @@ class SUTBlock(Block):
         key: torch.Tensor | None = None,
         value: torch.Tensor | None = None,
         kv_hidden_states: torch.Tensor | None = None,
+        unhalted_weight: torch.Tensor | None = None,
     ) -> torch.Tensor:
         self.sequence_mixer.layer_idx = layer_idx
         self.mlp_block.layer_idx = layer_idx
@@ -377,6 +397,7 @@ class SUTBlock(Block):
             key=key,
             value=value,
             kv_hidden_states=kv_hidden_states,
+            unhalted_weight=unhalted_weight,
         )
         if self.m_residual is not None:
             hidden_states = hidden_states * self.m_residual
@@ -389,7 +410,7 @@ class SUTBlock(Block):
         if self.pre_layernorm:
             hidden_states = self.ln_2(hidden_states)
 
-        hidden_states = self.mlp_block(hidden_states)
+        hidden_states = self.mlp_block(hidden_states, unhalted_weight=unhalted_weight)
 
         if self.m_residual is not None:
             hidden_states = hidden_states * self.m_residual

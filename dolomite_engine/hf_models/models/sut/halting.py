@@ -54,12 +54,14 @@ class HaltingGate(nn.Module):
         curr_halted_h = prev_halted_h + g[..., None] * prev_h
         # curr_aux_loss = prev_aux_loss + g
         p = torch.exp(curr_log_omg)  # prob of NOT halted =  1 - sum halted probabilities
+
+        # torch.set_printoptions(precision=0.2, linewidth=256)
+        # print((p[0] > 0.4).long())
         # print(
-        #     f"{(p < 0.01).float().mean().item():.5f} "
         #     f"{(p < 0.25).float().mean().item():.5f} "
-        #     f"{(p < 0.50).float().mean().item():.5f} "
-        #     f"{(p < 0.75).float().mean().item():.5f} "
-        #     f"{(p < 0.99).float().mean().item():.5f} "
+        #     f"{((0.25 < p) & (p < 0.50)).float().mean().item():.5f} "
+        #     f"{((0.50 < p) & (p < 0.75)).float().mean().item():.5f} "
+        #     f"{(0.75 < p).float().mean().item():.5f} "
         #     f"{p.mean().item():.5f}"
         # )
 
@@ -68,7 +70,7 @@ class HaltingGate(nn.Module):
             add_aux_loss(self.aux_coeff * p.mean())
 
         s = curr_halted_h + p[..., None].to(curr_h.dtype) * curr_h
-        return s, (curr_halted_h, curr_log_omg)
+        return s, p, (curr_halted_h, curr_log_omg)
 
     def finalise(self, curr_h, prev_halt_state):
         if prev_halt_state is not None:

@@ -171,6 +171,7 @@ class SUTModel(SUTPreTrainedModel, BaseModelMixin):
 
         halt_state = None
         kv_hidden_states = None
+        unhalted_weight = None
         for i in range(self.num_iters):  # looped region
 
             key, value = None, None
@@ -178,11 +179,10 @@ class SUTModel(SUTPreTrainedModel, BaseModelMixin):
             prev_hidden_states = hidden_states  # this is for halting later
 
             for u_block_idx in range(self.uni_layers):  # inner layers
-                block = self.h[block_idx + u_block_idx]
+                block: SUTBlock = self.h[block_idx + u_block_idx]
                 is_mamba_layer = sequence_mixer_type in ["mamba2", "rnn"]
                 if not block.shared_kv_cache:
                     key, value = None, None
-
                 hidden_states, key, value = block(
                     hidden_states,
                     past_key_values=past_key_values,
@@ -194,10 +194,13 @@ class SUTModel(SUTPreTrainedModel, BaseModelMixin):
                     key=key,
                     value=value,
                     kv_hidden_states=kv_hidden_states if u_block_idx == 0 else None,
+                    unhalted_weight=unhalted_weight,
                 )
 
             if self.halt is not None:
-                kv_hidden_states, halt_state = self.halt(prev_hidden_states, hidden_states, halt_state)
+                kv_hidden_states, unhalted_weight, halt_state = self.halt(
+                    prev_hidden_states, hidden_states, halt_state
+                )
 
         if self.halt is not None:
             hidden_states = kv_hidden_states
