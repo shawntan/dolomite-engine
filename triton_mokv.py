@@ -1,15 +1,18 @@
 """
-Fused Attention
+Fused MoKV Attention
 ===============
 
-This is a Triton implementation of the Flash Attention v2 algorithm from Tri Dao (https://tridao.me/publications/flash2/flash2.pdf)
+E: number of q heads / experts
+k: number of kv heads / top-k
+D: head dim
 
-Credits: OpenAI kernel team
+Inputs: 
+- Top-k indices: (batch, length, k)
+- Q:    (batch, E, length, D)
+- K, V: (batch, k, length, D)
 
-Extra Credits:
-
-* Original flash attention paper (https://arxiv.org/abs/2205.14135)
-* Rabe and Staats (https://arxiv.org/pdf/2112.05682v2.pdf)
+Outputs:
+- O:    (batch, E, length, D)
 
 """
 
@@ -22,6 +25,26 @@ from triton.tools.tensor_descriptor import TensorDescriptor
 
 DEVICE = triton.runtime.driver.active.get_active_torch_device()
 ALLOW_TF32 = tl.constexpr(False)
+
+def convert_topk_idxs(kv_head_idxs: torch.Tensor, num_q_heads: int) -> torch.LongTensor:
+    """
+    kv_head_idxs: (B, T, KVH) tensor of q-head indices in [0, num_q_heads-1].
+    Returns head_ptrs: (B, QH, T) with head_ptrs[b, q, t] = kv_index (0..KVH-1)
+    if KV head `kv_index` was assigned to q at (b,t), otherwise -1.
+    """
+    B, T, KVH = kv_head_idxs.shape
+    QH = num_q_heads
+    device = kv_head_idxs.device
+    # default -1 (meaning 'no kv assigned for that q-head at that token')
+    head_ptrs = torch.full((B, QH, T), -1, dtype=torch.long, device=device)
+    # we want to set head_ptrs[b, q_index, t] = kv_index
+    # indices for scatter must have shape (B, KVH, T): q_index per kv slot
+    indices = kv_head_idxs.permute(0, 2, 1)  # (B, KVH, T)
+    # values to place are kv indices 0..KVH-1, broadcasted to (B, KVH, T)
+    kv_ids = torch.arange(KVH, device=device, dtype=torch.long).view(1, KVH, 1).expand(B, KVH, T)
+    # scatter along dim=1 (the QH axis)
+    head_ptrs.scatter_(dim=1, index=indices, src=kv_ids)
+    return head_ptrs
 
 
 def is_hip():
@@ -192,7 +215,6 @@ def _attn_fwd(sm_scale, M,
                                     block_shape=[BLOCK_M, HEAD_DIM])
 
     offset_y = off_b * (N_CTX * QH) + off_qh * N_CTX
-    # kv_offset_y = off_b * (N_CTX * KVH) + off_kvh * N_CTX
     qo_offset_y = offset_y + start_m * BLOCK_M
     # initialize pointer to m and l
     m_i = tl.zeros([BLOCK_M], dtype=tl.float32) - float("inf")
@@ -244,9 +266,7 @@ def _attn_bwd_preprocess(O, o_stride: tl.constexpr,
     head_id = off_hz % num_heads
     off_n = tl.arange(0, HEAD_DIM)
     # load
-    # o = tl.load(O + off_hz * HEAD_DIM * N_CTX + off_m[:, None] * HEAD_DIM + off_n[None, :])
     o = tl.load(O + batch_id * o_stride[0] + head_id * o_stride[1] + off_m[:, None] * o_stride[2] + off_n[None, :] * o_stride[3])
-    # do = tl.load(DO + off_hz * HEAD_DIM * N_CTX + off_m[:, None] * HEAD_DIM + off_n[None, :]).to(tl.float32)
     do = tl.load(DO + batch_id * do_stride[0] + head_id * do_stride[1] + off_m[:, None] * do_stride[2] + off_n[None, :] * do_stride[3]).to(tl.float32)
     delta = tl.sum(o * do, axis=1)
     # write-back
@@ -531,11 +551,7 @@ class _attention(torch.autograd.Function):
         stage = 3 if causal else 1
         extra_kern_args = {}
         M = torch.empty((q.shape[0], q.shape[1], q.shape[2]), device=q.device, dtype=torch.float32)
-        # Use device_descriptor for Hopper + warpspec.
-        # desc_q = q
-        # desc_v = v
-        # desc_k = k
-        # desc_o = o
+
         def alloc_fn(size: int, align: int, _):
             return torch.empty(size, dtype=torch.int8, device="cuda")
 
@@ -623,3 +639,4 @@ class _attention(torch.autograd.Function):
 attention = _attention.apply
 
 TORCH_HAS_FP8 = hasattr(torch, 'float8_e5m2')
+
