@@ -133,7 +133,8 @@ class RSA(nn.Module):
         std = initializer_range / math.sqrt(2 * num_layers)
         if init_method == "mup":
             std /= math.sqrt(m_width)
-        self.output_projection = ParameterizedLinear(self.g_shape, self.output_size, bias=False, std=std)
+        # self.output_projection = ParameterizedLinear(self.g_shape, self.output_size, bias=False, std=std)
+        self.output_projection = ParameterizedLinear(self.v_shape, self.output_size, bias=False, std=std)
 
         self.g_norm = get_normalization_function(
             normalization_function, (self.num_heads if self.norm_after_flatten else 1) * self.v_head_dim
@@ -226,7 +227,6 @@ class RSA(nn.Module):
             x = x * F.silu(g)
             x = self.g_norm(x)
             x = x.flatten(-2, -1)
-
         x = self.output_projection(x)
 
         if not self.use_padding_free_transformer and attention_mask is not None:
@@ -238,6 +238,15 @@ class RSA(nn.Module):
     def reset_parameters(self) -> None:
         W = torch.eye(self.v_head_dim)
         W = W[None, ...].expand(self.num_heads, -1, -1)
+        # with torch.no_grad():
+        #     nn.init.zeros_(self.state_weight)
+        #     if not self.state_weight.is_meta:
+        #         orig_placements = self.state_weight.placements
+        #         device_mesh = self.state_weight.device_mesh
+        #         local_weight: torch.Tensor = self.state_weight.to_local()
+        #         for i in range(local_weight.size(0)):
+        #             nn.init.eye_(local_weight[i])
+        #         self.state_weight.redistribute(device_mesh=device_mesh, placements=orig_placements)
         self.state_weight.copy_(W)
 
         if self.use_residual:
