@@ -5,11 +5,7 @@
 import torch.nn as nn
 
 
-<<<<<<< HEAD
-_ALL_MARKERS = ["_no_weight_decay", "_has_mup_learning_rate", "_is_initialized"]
-=======
-_ALL_MARKERS = ["_no_weight_decay", "_has_mup_learning_rate", "_mup_learning_rate_divisor"]
->>>>>>> fec3ca2a (Allow specifying mup lr.)
+_ALL_MARKERS = ["_no_weight_decay", "_has_mup_learning_rate", "_is_initialized", "_mup_learning_rate_divisor"]
 
 
 def mark_parameter_as_no_weight_decay(parameter: nn.Parameter | None) -> nn.Parameter | None:
@@ -36,20 +32,11 @@ def mark_parameter_as_mup_learning_rate(parameter: nn.Parameter | None, divisor:
     return parameter
 
 
-<<<<<<< HEAD
 def mark_parameter_as_initialized(parameter: nn.Parameter | None) -> nn.Parameter | None:
     if parameter is not None:
         parameter._is_initialized = True
 
     return parameter
-=======
-def get_mup_learning_rate_divisor(parameter: nn.Parameter | None) -> float | None:
-    """Return a per-parameter MuP learning-rate divisor if set, else None."""
-    if parameter is None:
-        return None
-
-    return getattr(parameter, "_mup_learning_rate_divisor", None)
->>>>>>> fec3ca2a (Allow specifying mup lr.)
 
 
 def is_parameter_with_no_weight_decay(parameter: nn.Parameter | None) -> bool:
