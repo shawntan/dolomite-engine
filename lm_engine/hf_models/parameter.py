@@ -32,6 +32,11 @@ def mark_parameter_as_mup_learning_rate(parameter: nn.Parameter | None, divisor:
     return parameter
 
 
+def get_mup_learning_rate_divisor(parameter: nn.Parameter) -> nn.Parameter | None:
+    if is_parameter_with_mup_learning_rate(parameter):
+        return parameter._mup_learning_rate_divisor
+
+
 def mark_parameter_as_initialized(parameter: nn.Parameter | None) -> nn.Parameter | None:
     if parameter is not None:
         parameter._is_initialized = True

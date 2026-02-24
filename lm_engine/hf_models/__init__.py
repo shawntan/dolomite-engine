@@ -29,6 +29,7 @@ from .parameter import (
     mark_parameter_as_initialized,
     mark_parameter_as_mup_learning_rate,
     mark_parameter_as_no_weight_decay,
+    get_mup_learning_rate_divisor
 )
 from .register_hf import get_model_parallel_class, is_custom_model, register_model_classes
 from .unshard import fix_unsharded_state_dict, unshard_tensor_parallel_state_dicts
