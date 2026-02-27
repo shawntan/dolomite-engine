@@ -12,13 +12,14 @@ from .causal_convolution import CausalConvolution
 from .gated_deltanet import GatedDeltaNet
 from .gru import GRU
 from .mamba2 import Mamba2
+from .mokv_attention import MoKVAttention
 from .multihead_latent_attention import MultiHeadLatentAttention
 from .rnn import RNN
 from .rsa import RSA
 from .utils import flash_attention
 
 
-SEQUENCE_MIXER_TYPE = Attention | CausalConvolution | GRU | Mamba2 | MultiHeadLatentAttention | RNN | GatedDeltaNet
+SEQUENCE_MIXER_TYPE = Attention | CausalConvolution | GRU | Mamba2 | MultiHeadLatentAttention | RNN | GatedDeltaNet | MoKVAttention
 
 
 def get_sequence_mixer(
@@ -198,6 +199,13 @@ def get_sequence_mixer(
 
         if sequence_mixer_type == "softmax_attention":
             return Attention(
+                **sequence_mixer_kwargs,
+                qkv_bias=block.qkv_bias,
+                softmax_dropout=block.softmax_dropout,
+                use_padding_free_transformer=use_padding_free_transformer,
+            )
+        elif sequence_mixer_type == "mokv_attention":
+            return MoKVAttention(
                 **sequence_mixer_kwargs,
                 qkv_bias=block.qkv_bias,
                 softmax_dropout=block.softmax_dropout,

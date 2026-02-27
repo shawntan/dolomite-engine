@@ -16,6 +16,7 @@ from .sequence_mixer import (
     _GatedDeltaNetArgs,
     _GRUArgs,
     _Mamba2Args,
+    _MoKVAttentionArgs,
     _MultiHeadLatentAttentionArgs,
     _RNNArgs,
     _RSAArgs,
@@ -46,6 +47,7 @@ _SEQUENCE_MIXER_CONFIG_CLASSES = {
     "rsa": _RSAArgs,
     "softmax_attention": _SoftmaxAttentionArgs,
     "gated_deltanet": _GatedDeltaNetArgs,
+    "mokv_attention": _MoKVAttentionArgs,
 }
 
 _MLP_CONFIG_CLASSES = {"MLP": _MLPArgs, "MoE": _MoEArgs}
